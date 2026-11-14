@@ -670,5 +670,11 @@ with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True))
     $env:CORINTHOS_DESKTOP_SMOKE_PROJECT = $originalSmokeProject
     $env:CORINTHOS_DESKTOP_SMOKE_RECEIPT = $originalSmokeReceipt
     $env:CORINTHOS_DESKTOP_SMOKE_START = $originalSmokeStart
-    if ([IO.Directory]::Exists($root)) { Remove-SetupTree $root $parent }
+    if ([IO.Directory]::Exists($root)) {
+        Assert-PlainPath $root
+        Assert-Spike ([IO.Path]::GetDirectoryName($root) -ceq $parent -and
+            [IO.Path]::GetFileName($root) -cmatch '^corinthos-desktop-[a-f0-9]{32}$') 'Refusing cleanup outside the exact desktop fixture.'
+        [void] (Get-SetupInventory $root)
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
 }

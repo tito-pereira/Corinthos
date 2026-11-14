@@ -76,15 +76,25 @@ function Find-ProductProcesses([string[]] $Executables) {
 }
 
 function Open-ProductDesktop([string] $Desktop, [string] $PrivatePython) {
+    $startup = [Diagnostics.Stopwatch]::StartNew()
     $null = & corinthos
     Assert-Smoke ($LASTEXITCODE -eq 0) 'The installed no-argument launcher did not open the desktop.'
     $owner = Wait-ProductObservation { Find-ProductProcesses @($Desktop) } 'the installed desktop process'
     Assert-Smoke (@($owner).Count -eq 1) 'Expected one process for the installed desktop.'
     $script:ProductDesktopId = [int] $owner.ProcessId
     $null = Wait-ProductObservation { Find-ProductControl 'Connected' } 'a connected private backend' 50
+    $startup.Stop()
+    $processCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $script:ProductDesktopId)
+    $windows = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+        [System.Windows.Automation.TreeScope]::Children, $processCondition) | Where-Object {
+        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and !$_.Current.IsOffscreen
+    })
+    Assert-Smoke ($windows.Count -eq 1 -and @(Find-ProductProcesses @($Desktop)).Count -eq 1) 'Expected exactly one visible installed desktop window and process.'
     $sidecar = @(Find-ProductProcesses @($PrivatePython))
     Assert-Smoke ($sidecar.Count -eq 1 -and $sidecar[0].ParentProcessId -eq $script:ProductDesktopId) 'Desktop did not own exactly one adjacent private Python sidecar.'
     $null = Wait-ProductObservation { Find-ProductControl 'Recent projects' } 'Home'
+    return $startup.ElapsedMilliseconds
 }
 
 function Close-ProductDesktop([string[]] $ChildExecutables) {
@@ -105,7 +115,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
     $projectName = [IO.Path]::GetFileName($Project)
     $children = @($PrivatePython, $Provider)
     try {
-        Open-ProductDesktop $Desktop $PrivatePython
+        $firstStartup = Open-ProductDesktop $Desktop $PrivatePython
         Click-ProductButton 'Command'
         $null = Wait-ProductObservation { Find-ProductControl 'Refresh Command' } 'Command'
         $null = Wait-ProductObservation { Find-ProductControl $projectName } 'the project previously recorded by CLI'
@@ -192,7 +202,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $null = Wait-ProductObservation { Find-ProductControl $projection.projection_digest } 'the same Context Projection digest'
         Close-ProductDesktop $children
 
-        Open-ProductDesktop $Desktop $PrivatePython
+        $null = Open-ProductDesktop $Desktop $PrivatePython
         Click-ProductButton 'Command'
         $null = Wait-ProductObservation { Find-ProductControl 'INTERRUPTED' } 'the interrupted Session state'
         Click-ProductButton 'Open Agent Session'
@@ -204,12 +214,16 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         Assert-Smoke ($LASTEXITCODE -eq 0 -and $restoredContext.projection.projection_id -ceq $projection.projection_id) 'Installed CLI did not preserve the interrupted Session Context.'
         Close-ProductDesktop $children
         Write-Host 'Installed Home and Command, GUI/CLI Work Item and provider settings, exact Session and Context, process cleanup and reopening passed.'
+        return $firstStartup
     } finally {
         if ($script:ProductDesktopId) {
             $remaining = Get-Process -Id $script:ProductDesktopId -ErrorAction SilentlyContinue
             if ($remaining) {
                 [void] $remaining.CloseMainWindow()
-                if (!$remaining.WaitForExit(22000)) { $remaining.Kill() }
+                if (!$remaining.WaitForExit(22000)) {
+                    $remaining.Kill()
+                    [void] $remaining.WaitForExit(5000)
+                }
                 $remaining.Dispose()
             }
         }

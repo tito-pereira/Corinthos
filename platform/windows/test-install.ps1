@@ -20,11 +20,14 @@ function Assert-Smoke([bool] $Condition, [string] $Message) {
 function Invoke-TestInstall([string] $Script, [string] $ExpectedError = '') {
     $lines = [Collections.Generic.List[string]]::new()
     $failure = ''
-    try { & $Script 6>&1 | ForEach-Object { $lines.Add($_.ToString()) } }
+    try { & $Script 6>&1 | ForEach-Object {
+        $line = $_.ToString()
+        $lines.Add($line)
+        Write-Host $line
+    } }
     catch { $failure = $_.Exception.Message }
     $percentages = @(
         foreach ($line in $lines) {
-            Write-Host $line
             if ($line -match '^\[.*\] ([0-9]{1,3})% ') { [int] $Matches[1] }
         }
     )
@@ -264,6 +267,10 @@ try {
     Assert-Smoke ($LASTEXITCODE -eq 0 -and $version -like 'corinthos *') 'Installed command failed after the checkout moved.'
     $desktop = Join-Path $paths.Bin 'corinthos-desktop.exe'
     $privatePython = Join-Path $paths.Install 'runtime\python.exe'
+    $installedBytes = (Get-ChildItem -LiteralPath $paths.Install -Recurse -Force -File | Measure-Object Length -Sum).Sum
+    $desktopBytes = [IO.FileInfo]::new($desktop).Length
+    $toolchainCache = Join-Path $paths.Cache 'toolchains'
+    $toolchainCacheBytes = (Get-ChildItem -LiteralPath $toolchainCache -Force -File | Measure-Object Length -Sum).Sum
     Assert-Smoke ((& corinthos --version) -ceq $version -and !(Find-ProductProcesses @($desktop))) 'CLI arguments unexpectedly started the desktop.'
     $errorOutput = & {
         $ErrorActionPreference = 'Continue'
@@ -288,7 +295,7 @@ try {
     Assert-Smoke ((Get-Content -LiteralPath $recent -Raw | ConvertFrom-Json).projects.Count -eq 2) 'Installed Home did not record both projects.'
     $uiProvider = New-ProbeSentinel (Join-Path $sandbox 'GUI configured provider')
     $uiProviderLog = Join-Path ([IO.Path]::GetDirectoryName($uiProvider)) 'probe.log'
-    Invoke-InstalledDesktopSmoke $desktop $privatePython (Join-Path $other $projects[0]) $uiProvider $uiProviderLog
+    $startupMilliseconds = Invoke-InstalledDesktopSmoke $desktop $privatePython (Join-Path $other $projects[0]) $uiProvider $uiProviderLog
     Assert-Smoke (![IO.File]::Exists($autoLog)) 'Installed desktop executed the provider on PATH.'
     Save-ReleaseCandidate $paths $runnerTemp $releaseFiles
     $config = Join-Path $paths.State 'config.json'
@@ -318,7 +325,9 @@ try {
     $registryHash = (Get-FileHash -LiteralPath $registry).Hash
     $env:PATH += ";$autoDirectory"
     $key.SetValue('Path', "$expectedPath;$($paths.Bin)\", [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $warmBuild = [Diagnostics.Stopwatch]::StartNew()
     $reinstall = Invoke-TestInstall $installer
+    $warmBuild.Stop()
     Assert-Smoke (!($reinstall -match 'Downloading ')) 'Reinstall did not reuse the verified cache.'
     Assert-Smoke ((Get-UserPath $key).Text -ceq $expectedPath) 'Reinstall did not deduplicate the owned PATH.'
     Assert-Smoke ((Get-FileHash -LiteralPath $config).Hash -ceq $configHash -and (Get-FileHash -LiteralPath $recent).Hash -ceq $recentHash) 'Reinstall changed compatible user settings or recent projects.'
@@ -461,6 +470,14 @@ if __name__ == '__main__':
             state_preserving_uninstall = 'PASS'
             signing_state = 'UNSIGNED'
             real_provider_validation = 'NOT_AVAILABLE'
+            measurements = [ordered] @{
+                installed_application_bytes = [long] $installedBytes
+                desktop_binary_bytes = [long] $desktopBytes
+                toolchain_cache_bytes = [long] $toolchainCacheBytes
+                cold_source_install_ms = $firstBuild.ElapsedMilliseconds
+                warm_reinstall_ms = $warmBuild.ElapsedMilliseconds
+                desktop_start_to_private_handshake_ms = [long] $startupMilliseconds
+            }
         })
     }
     Write-Host 'Fresh install, PATH, no-system-Python command, project isolation, cache, rollback and uninstall smoke passed.'
