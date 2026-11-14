@@ -28,6 +28,14 @@ from corinthos.contracts import (
 from corinthos.contracts import store as storage
 
 BASELINE = "e058f4b96454dba44e5b31387c37061b75cec662"
+LEGACY_PYTHON_COMPAT = """
+from pathlib import PureWindowsPath
+
+# Restore the name used by the archived source on Python 3.15 and later.
+if not hasattr(PureWindowsPath, 'is_reserved'):
+    from ntpath import isreserved
+    PureWindowsPath.is_reserved = isreserved
+"""
 LEGACY_SETUP = """
 import hashlib, json
 from copy import deepcopy
@@ -85,15 +93,19 @@ def original_state(tmp_path_factory):
     )
     with ZipFile(io.BytesIO(archive)) as files:
         files.extractall(root / "baseline")
-    subprocess.run(
-        [sys.executable, "-c", LEGACY_SETUP],
+    result = subprocess.run(
+        [sys.executable, "-c", LEGACY_PYTHON_COMPAT + LEGACY_SETUP],
         cwd=root,
         env={**os.environ, "PYTHONPATH": str(root / "baseline" / "src")},
-        check=True,
         capture_output=True,
         text=True,
+        errors="replace",
         timeout=30,
     )
+    if result.returncode:
+        pytest.fail(
+            f"Archived legacy setup failed ({result.returncode}):\n{result.stderr}", pytrace=False
+        )
     return root / ".nukytera"
 
 

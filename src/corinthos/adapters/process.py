@@ -6,7 +6,7 @@ import os
 import queue
 import subprocess
 import threading
-from decimal import Decimal, DecimalException
+from decimal import MAX_EMAX, MIN_ETINY, Decimal, DecimalException
 from time import monotonic
 
 from .model import AgentResult
@@ -15,6 +15,20 @@ from .process_control import start_process
 _MAX_LINE = 1_048_576
 _MAX_OUTPUT = 8_388_608
 _MAX_EVENTS = 10_000
+
+
+def _session_decimal(value):
+    # Decimal backends differ in how they handle out-of-range input exponents.
+    _, _, exponent = value.lower().partition("e")
+    if exponent:
+        bound = str(-MIN_ETINY if exponent.startswith("-") else MAX_EMAX)
+        magnitude = exponent.lstrip("+-").lstrip("0")
+        if len(magnitude) > len(bound) or (len(magnitude) == len(bound) and magnitude > bound):
+            raise ValueError("Native event decimal exponent is out of range.")
+    result = Decimal(value)
+    if not result.is_finite():
+        raise ValueError("Native event decimal is not finite.")
+    return result
 
 
 def run_process(
@@ -145,7 +159,7 @@ def run_process(
                 continue
             try:
                 native = json.loads(
-                    line.decode("utf-8"), **({"parse_float": Decimal} if session else {})
+                    line.decode("utf-8"), **({"parse_float": _session_decimal} if session else {})
                 )
                 if not isinstance(native, dict) or not isinstance(native.get("type"), str):
                     raise ValueError
