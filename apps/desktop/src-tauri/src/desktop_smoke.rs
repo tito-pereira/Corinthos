@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tauri::webview::PageLoadEvent;
-use tauri::{Runtime, Url, WebviewWindowBuilder};
+use tauri::{Runtime, WebviewWindowBuilder};
 
 pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
     window: WebviewWindowBuilder<'a, R, M>,
@@ -51,10 +51,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
     let injected = Arc::new(AtomicBool::new(false));
     let can_report = Arc::clone(&injected);
     Ok(window
-        .on_navigation(local_asset)
         .on_page_load(move |window, event| {
             if event.event() == PageLoadEvent::Finished
-                && local_asset(event.url())
+                && crate::desktop::local_asset(event.url())
                 && !injected.swap(true, Ordering::AcqRel)
             {
                 let _ = window.eval(&script);
@@ -67,6 +66,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
             let outcome = match title.as_str() {
                 "Corinthos desktop smoke: pass" => "pass\n",
                 "Corinthos desktop smoke: fail [backend]" => "fail [backend]\n",
+                "Corinthos desktop smoke: fail [ipc-policy]" => "fail [ipc-policy]\n",
                 "Corinthos desktop smoke: fail [registry]" => "fail [registry]\n",
                 "Corinthos desktop smoke: fail [project]" => "fail [project]\n",
                 "Corinthos desktop smoke: fail [agents]" => "fail [agents]\n",
@@ -117,13 +117,6 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 let _ = file.write_all(outcome.as_bytes());
             }
         }))
-}
-
-fn local_asset(url: &Url) -> bool {
-    matches!(
-        (url.scheme(), url.host_str(), url.port()),
-        ("http" | "https", Some("tauri.localhost"), None) | ("tauri", Some("localhost"), None)
-    )
 }
 
 fn invalid_fixture() -> io::Error {

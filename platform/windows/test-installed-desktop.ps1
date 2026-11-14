@@ -1,0 +1,192 @@
+# SPDX-License-Identifier: MPL-2.0
+# Requires the disposable Windows installer smoke, which owns the user scope.
+
+function Wait-ProductObservation([scriptblock] $Check, [string] $Description, [int] $Seconds = 25) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $observed = & $Check
+        if ($observed) { return $observed }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Installed desktop did not show $Description."
+}
+
+function Find-ProductControl([string] $Name, $Kind = $null, [switch] $Enabled) {
+    $process = Get-Process -Id $script:ProductDesktopId -ErrorAction SilentlyContinue
+    if (!$process -or !$process.MainWindowHandle) { return }
+    try {
+        $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+        $condition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+        $controls = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        foreach ($control in $controls) {
+            if ((!$Kind -or $control.Current.ControlType -eq $Kind) -and
+                (!$Enabled -or $control.Current.IsEnabled)) { return $control }
+        }
+    } catch [System.Windows.Automation.ElementNotAvailableException] { }
+}
+
+function Click-ProductButton([string] $Name) {
+    $control = Wait-ProductObservation {
+        Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Button) -Enabled
+    } "an enabled $Name button"
+    $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
+function Set-ProductText([string] $Name, [string] $Text) {
+    $control = Wait-ProductObservation {
+        Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Edit) -Enabled
+    } "an enabled $Name field"
+    $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Text)
+}
+
+function Select-ProductCodex([string] $Name) {
+    $control = Wait-ProductObservation {
+        Find-ProductControl $Name ([System.Windows.Automation.ControlType]::ComboBox) -Enabled
+    } "the $Name selector"
+    $expand = $control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    $option = Wait-ProductObservation {
+        $condition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'codex')
+        $matches = $control.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        foreach ($match in $matches) {
+            if ($match.Current.ControlType -in @(
+                [System.Windows.Automation.ControlType]::ListItem, [System.Windows.Automation.ControlType]::MenuItem)) {
+                return $match
+            }
+        }
+        Find-ProductControl 'codex' ([System.Windows.Automation.ControlType]::ListItem) -Enabled
+    } 'the Codex provider option'
+    $selection = $null
+    if ($option.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref] $selection)) {
+        $selection.Select()
+        if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+            $expand.Collapse()
+        }
+    } else {
+        $option.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+}
+
+function Find-ProductProcesses([string[]] $Executables) {
+    $names = @($Executables | ForEach-Object { [IO.Path]::GetFileName($_) } | Sort-Object -Unique)
+    $where = ($names | ForEach-Object { "Name = '$_'" }) -join ' OR '
+    Get-CimInstance Win32_Process -Filter $where | Where-Object { $_.ExecutablePath -in $Executables }
+}
+
+function Open-ProductDesktop([string] $Desktop, [string] $PrivatePython) {
+    $null = & corinthos
+    Assert-Smoke ($LASTEXITCODE -eq 0) 'The installed no-argument launcher did not open the desktop.'
+    $owner = Wait-ProductObservation { Find-ProductProcesses @($Desktop) } 'the installed desktop process'
+    Assert-Smoke (@($owner).Count -eq 1) 'Expected one process for the installed desktop.'
+    $script:ProductDesktopId = [int] $owner.ProcessId
+    $null = Wait-ProductObservation { Find-ProductControl 'Connected' } 'a connected private backend' 50
+    $sidecar = @(Find-ProductProcesses @($PrivatePython))
+    Assert-Smoke ($sidecar.Count -eq 1 -and $sidecar[0].ParentProcessId -eq $script:ProductDesktopId) 'Desktop did not own exactly one adjacent private Python sidecar.'
+    $null = Wait-ProductObservation { Find-ProductControl 'Recent projects' } 'Home'
+}
+
+function Close-ProductDesktop([string[]] $ChildExecutables) {
+    $process = Get-Process -Id $script:ProductDesktopId
+    try {
+        Assert-Smoke ($process.CloseMainWindow() -and $process.WaitForExit(22000) -and $process.ExitCode -eq 0) 'Installed desktop did not shut down cleanly.'
+        Assert-Smoke (!(Find-ProductProcesses $ChildExecutables)) 'Installed desktop left a private sidecar or provider process.'
+    } finally { $process.Dispose() }
+    $script:ProductDesktopId = 0
+}
+
+function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython, [string] $Project, [string] $Provider, [string] $ProviderLog) {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $script:ProductDesktopId = 0
+    $providerBefore = if ([IO.File]::Exists($ProviderLog)) { [IO.File]::ReadAllLines($ProviderLog).Length } else { 0 }
+    $objective = 'Create the installed desktop fixture'
+    $cliObjective = 'Create a second fixture through CLI'
+    $projectName = [IO.Path]::GetFileName($Project)
+    $children = @($PrivatePython, $Provider)
+    try {
+        Open-ProductDesktop $Desktop $PrivatePython
+        Click-ProductButton 'Command'
+        $null = Wait-ProductObservation { Find-ProductControl 'Refresh Command' } 'Command'
+        $null = Wait-ProductObservation { Find-ProductControl $projectName } 'the project previously recorded by CLI'
+        Assert-Smoke (![IO.File]::Exists($ProviderLog) -or [IO.File]::ReadAllLines($ProviderLog).Length -eq $providerBefore) 'Installed Home or Command executed a provider.'
+        Click-ProductButton 'Projects'
+        Set-ProductText 'Project root' $Project
+        Click-ProductButton 'Open project'
+        $null = Wait-ProductObservation { Find-ProductControl 'Project Summary' } 'the opened project'
+        Click-ProductButton 'Settings'
+        $scope = Wait-ProductObservation {
+            Find-ProductControl 'Configure providers for the selected project' ([System.Windows.Automation.ControlType]::CheckBox) -Enabled
+        } 'the project provider setting'
+        $scope.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        Select-ProductCodex 'Provider'
+        Set-ProductText 'Absolute executable path' $Provider
+        Click-ProductButton 'Save provider'
+        $null = Wait-ProductObservation { Find-ProductControl 'Provider selection saved.' } 'confirmation of the explicit provider setting'
+        $adapter = (& corinthos adapters show --root $Project --provider codex) -join [Environment]::NewLine
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $adapter.Contains($Provider)) 'CLI did not observe the provider setting saved in the GUI.'
+        Click-ProductButton 'Projects'
+        Click-ProductButton 'Work'
+        Set-ProductText 'Objective' $objective
+        Set-ProductText 'Acceptance criteria, one per line' 'Observe the exact session and context through both surfaces.'
+        Click-ProductButton 'Create Work Item'
+        $null = Wait-ProductObservation { Find-ProductControl $objective } 'the Work Item created in the GUI'
+        $listed = (& corinthos work list --root $Project) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0) 'Could not list Work Items through the installed CLI.'
+        $work = @($listed.items | Where-Object { $_.objective -ceq $objective })
+        Assert-Smoke ($work.Count -eq 1 -and $work[0].scope_level -ceq 'TASK') 'Installed CLI did not observe the exact TASK created in the GUI.'
+        $cliWork = (& corinthos work create --root $Project --scope TASK --objective $cliObjective --criterion 'Inspect the installed Work Item tree.') | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $cliWork.work_item_id) 'Could not create the second Work Item through the installed CLI.'
+        Click-ProductButton 'Refresh Work Items'
+        $null = Wait-ProductObservation { Find-ProductControl $cliObjective } 'the Work Item created in the CLI'
+        Click-ProductButton $objective
+        Select-ProductCodex 'Execution provider'
+        Click-ProductButton 'Start adaptive workflow'
+        $tree = @(Wait-ProductObservation {
+            $running = @(Find-ProductProcesses @($Provider))
+            if ($running.Count -eq 2) { $running }
+        } 'the explicit provider and its child')
+        Assert-Smoke (@($tree | Where-Object { $_.ParentProcessId -in $tree.ProcessId }).Count -eq 1) 'Expected one direct child of the explicitly configured provider.'
+        $sessions = (& corinthos session list --root $Project) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and @($sessions.sessions).Count -eq 1) 'Installed CLI did not observe the exact GUI-launched Session.'
+        $session = $sessions.sessions[0]
+        Assert-Smoke ($session.work_item_id -ceq $work[0].work_item_id -and $session.state -ceq 'RUNNING' -and $session.provider -ceq 'codex') 'Installed Session did not retain its GUI Work Item or provider.'
+        $binding = (& corinthos context for-session $session.session_id --root $Project) | ConvertFrom-Json
+        $projection = $binding.projection
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $projection.work_item_id -ceq $work[0].work_item_id -and
+            $projection.target_provider -ceq 'codex' -and $projection.projection_digest -match '^[a-f0-9]{64}$') 'Installed CLI and Session disagreed on the exact Context Projection.'
+        $events = Wait-ProductObservation {
+            $transcript = (& corinthos session events $session.session_id --root $Project) -join [Environment]::NewLine
+            if ($LASTEXITCODE -eq 0 -and $transcript.Contains('Fixture provider claimed VERIFIED.')) { $transcript }
+        } 'the fixture provider observation'
+        Assert-Smoke (!$events.Contains('installed-fixture-hidden-value')) 'Installed Session event leaked the fixture secret.'
+        Click-ProductButton 'Refresh workflow'
+        $null = Wait-ProductObservation { Find-ProductControl $session.session_id } 'the exact active Session'
+        $null = Wait-ProductObservation { Find-ProductControl 'NOT_VERIFIED' } 'the independent Validation state'
+        Click-ProductButton 'Open Context Projection'
+        $null = Wait-ProductObservation { Find-ProductControl $projection.projection_digest } 'the same Context Projection digest'
+        Close-ProductDesktop $children
+
+        Open-ProductDesktop $Desktop $PrivatePython
+        Click-ProductButton 'Command'
+        $null = Wait-ProductObservation { Find-ProductControl 'INTERRUPTED' } 'the interrupted Session state'
+        Click-ProductButton 'Open Agent Session'
+        $null = Wait-ProductObservation { Find-ProductControl $session.session_id } 'the persisted Session from Command'
+        $restored = (& corinthos session show $session.session_id --root $Project) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $restored.state -ceq 'INTERRUPTED' -and
+            !$restored.cleanup_unconfirmed) 'Installed CLI did not preserve the cleanly interrupted Session.'
+        $restoredContext = (& corinthos context for-session $session.session_id --root $Project) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $restoredContext.projection.projection_id -ceq $projection.projection_id) 'Installed CLI did not preserve the interrupted Session Context.'
+        Close-ProductDesktop $children
+        Write-Host 'Installed Home and Command, GUI/CLI Work Item and provider settings, exact Session and Context, process cleanup and reopening passed.'
+    } finally {
+        if ($script:ProductDesktopId) {
+            $remaining = Get-Process -Id $script:ProductDesktopId -ErrorAction SilentlyContinue
+            if ($remaining) {
+                [void] $remaining.CloseMainWindow()
+                if (!$remaining.WaitForExit(22000)) { $remaining.Kill() }
+                $remaining.Dispose()
+            }
+        }
+    }
+}

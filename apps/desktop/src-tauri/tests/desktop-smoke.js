@@ -419,6 +419,28 @@
       );
     });
     if (!backendReady) return report("fail [backend]");
+    if (mode === "passive") {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      const rejects = async (command, params, message) => {
+        try {
+          await invoke(command, params);
+          return false;
+        } catch (error) {
+          return message.test(String(error));
+        }
+      };
+      const summary = { method: "project.summary", params: { root: projectRoot } };
+      const traversal = { method: "project.summary", params: { root: projectRoot + "\\..\\outside" } };
+      if (!invoke || window.__TAURI__ || !["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"].includes(
+        location.protocol + "//" + location.hostname,
+      ) || !(await rejects("plugin:window|title", { label: "main" }, /not allowed|denied/i)) ||
+        !(await rejects("workspace_request", { method: "corinthos.unlisted", params: {} }, /workspace operation is unavailable/)) ||
+        !(await rejects("workspace_request", traversal, /absolute local project directory/))) {
+        return report("fail [ipc-policy]");
+      }
+      const after = await invoke("workspace_request", summary);
+      if (!after.initialized || after.root.toLowerCase() !== projectRoot.toLowerCase()) return report("fail [ipc-policy]");
+    }
     if (mode.startsWith("command-")) return verifyCommand();
     if (mode.startsWith("import-")) return verifyImport();
     if (mode === "adaptive" || mode === "adaptive-passive") return verifyAdaptive();

@@ -7,6 +7,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'platform\windows\common.ps1')
 . (Join-Path $PSScriptRoot 'platform\windows\distribution.ps1')
+. (Join-Path $PSScriptRoot 'platform\windows\toolchain.ps1')
+. (Join-Path $PSScriptRoot 'platform\windows\release.ps1')
 
 $script:InstallPercent = 0
 $mutex = $key = $work = $null
@@ -26,10 +28,15 @@ try {
     if ($null -eq $key) { throw 'The current user Environment registry key is unavailable.' }
     [void] (Get-UserPath $key)
     Restore-PreviousInstall $paths $key
+    if ([IO.Directory]::Exists($paths.Install)) {
+        Assert-InstalledInventory $paths.Install (Read-InstallManifest $paths.Install)
+    }
+    Clear-AbandonedInstallStages $paths
     [void] [IO.Directory]::CreateDirectory($paths.Cache)
     [void] [IO.Directory]::CreateDirectory($paths.Programs)
     $work = Join-Path $paths.Programs ('.Corinthos-stage-' + [guid]::NewGuid().ToString('N'))
     [void] [IO.Directory]::CreateDirectory($work)
+    [IO.File]::WriteAllText((Join-Path $work 'corinthos-stage.marker'), 'corinthos-core-stage-v1')
     Show-InstallProgress 10 'Prepared per-user installation and cache'
 
     $tls = [Net.ServicePointManager]::SecurityProtocol
@@ -40,6 +47,7 @@ try {
         $candidate = New-InstallCandidate $source $paths $work $compiler
     } finally { [Net.ServicePointManager]::SecurityProtocol = $tls }
     $version = Test-InstallCandidate $candidate
+    Test-DesktopCandidate $candidate
     Write-InstallManifest $candidate 'staged' $version $work
     Show-InstallProgress 82 'Verified staged application'
 
@@ -54,6 +62,7 @@ try {
         $movedCandidate = $true
         $installedVersion = Test-InstallCandidate $paths.Install
         if ($installedVersion -cne $version) { throw 'The installed application version changed.' }
+        Test-DesktopCandidate $paths.Install
         # Provider probes require a separate user action.
         Invoke-PrivatePython $paths.Install @('-m', 'corinthos.user_state')
         Show-InstallProgress 90 'Initialized Corinthos user state'
@@ -64,6 +73,7 @@ try {
         }
         Show-InstallProgress 95 'Verified the installed command'
         $originalPath = Get-UserPath $key
+        Write-SetupPathJournal $paths $originalPath
         $changedPath = $true
         Set-OwnedUserPath $key $originalPath $paths.Bin
         Assert-InstalledInventory $paths.Install (Read-InstallManifest $paths.Install)
@@ -71,7 +81,7 @@ try {
     } catch {
         $installationError = $_
         try {
-            if ($changedPath) { Restore-UserPath $key $originalPath }
+            if ($changedPath) { [void] (Restore-SetupPathJournal $paths $key) }
             $retired = if ($movedCandidate) { Move-ToRetiredSetup $paths.Install $paths.Programs }
             if ([IO.Directory]::Exists($paths.Previous)) { [IO.Directory]::Move($paths.Previous, $paths.Install) }
             if ($retired) { Clear-RetiredSetup $retired $paths.Programs }
@@ -82,12 +92,13 @@ try {
     }
     Send-UserPathChange
     try {
+        Clear-SetupPathJournal $paths
         if ([IO.Directory]::Exists($paths.Previous)) {
             $retired = Move-ToRetiredSetup $paths.Previous $paths.Programs
             Clear-RetiredSetup $retired $paths.Programs
         }
     }
-    catch { Write-Warning "The verified installation is ready. Close older Corinthos sessions and rerun setup to clear $($paths.Previous)." }
+    catch { Write-Warning 'The verified installation is ready. Close older Corinthos sessions and rerun setup to finish cleanup.' }
     Show-InstallProgress 100 'Corinthos installed successfully'
     Write-Host 'Open a new terminal and run corinthos.'
 } catch {

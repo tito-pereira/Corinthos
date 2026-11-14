@@ -1,59 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
-use corinthos_desktop::sidecar::{EventSink, Handshake, Sidecar};
+use corinthos_desktop::{
+    sidecar::{EventSink, Handshake, Sidecar},
+    workspace,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewWindowBuilder};
-
-const WORKSPACE_METHODS: &[&str] = &[
-    "command.overview",
-    "command.project",
-    "settings.providers",
-    "providers.refresh",
-    "provider.configure",
-    "provider.reset",
-    "review.list",
-    "review.get",
-    "review.defer",
-    "projects.list",
-    "project.summary",
-    "project.open",
-    "import.inspect",
-    "import.commit",
-    "import.status",
-    "import.refresh",
-    "import.files",
-    "work.tree",
-    "work.get",
-    "work.create",
-    "work.status",
-    "scope.assess",
-    "scope.set",
-    "flow.status",
-    "flow.start",
-    "flow.complete",
-    "work.report",
-    "session.start",
-    "session.list",
-    "session.get",
-    "session.events",
-    "session.cancel",
-    "session.recover",
-    "context.create",
-    "context.get",
-    "context.list",
-    "context.sources",
-    "context.verify",
-    "context.for_session",
-    "handoff.create",
-    "handoff.get",
-    "handoff.list",
-    "switch.status",
-    "switch.execute",
-];
+use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewWindowBuilder};
 
 #[derive(Default)]
 struct Backend {
@@ -164,9 +121,7 @@ async fn workspace_request(
     params: Value,
     state: State<'_, DesktopState>,
 ) -> Result<Value, &'static str> {
-    if !WORKSPACE_METHODS.contains(&method.as_str()) || !params.is_object() {
-        return Err("That workspace operation is unavailable.");
-    }
+    workspace::validate(&method, &params)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut backend = state
@@ -193,7 +148,22 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(DesktopState::default())
         .setup(|app| {
-            let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?;
+            let config = app.config();
+            let allowed_development_origin = if cfg!(debug_assertions) && tauri::is_dev() {
+                config.build.dev_url.as_ref().map(Url::origin)
+            } else {
+                None
+            };
+            let window = WebviewWindowBuilder::from_config(app, &config.app.windows[0])?
+                .on_navigation(move |url| {
+                    local_asset(url)
+                        || allowed_development_origin
+                            .as_ref()
+                            .is_some_and(|origin| *origin == url.origin())
+                })
+                .on_new_window(|_, _| NewWindowResponse::Deny)
+                .on_download(|_, event| !matches!(event, DownloadEvent::Requested { .. }))
+                .devtools(cfg!(debug_assertions));
             #[cfg(feature = "desktop-smoke")]
             let window = crate::desktop_smoke::with_probe(window)?;
             window.build()?;
@@ -218,4 +188,13 @@ pub fn run() {
             }
         }
     });
+}
+
+pub fn local_asset(url: &Url) -> bool {
+    url.username().is_empty()
+        && url.password().is_none()
+        && matches!(
+            (url.scheme(), url.host_str(), url.port()),
+            ("http" | "https", Some("tauri.localhost"), None) | ("tauri", Some("localhost"), None)
+        )
 }

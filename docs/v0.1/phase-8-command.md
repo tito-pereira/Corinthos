@@ -77,12 +77,9 @@ The added passive methods are `command.overview`, `command.project`,
 `review.defer` require request IDs. RPC v1 and existing v2 methods keep their
 wire shapes. SQLite remains v9.
 
-Build the source desktop on Windows using the
-[contributor desktop commands](phase-1-desktop.md#windows-contributor-build). Run the
-resulting `corinthos-desktop.exe` directly or use `npm run tauri -- dev`
-from `apps/desktop` with a contributor Python configured as documented there.
-The Windows `corinthos.exe` launcher opens an ordinary adjacent
-`corinthos-desktop.exe` on a no-argument invocation. When the executable is
-absent, the launcher opens terminal Home. Arguments continue to select CLI
-paths. The source installer supplies the pinned CPython 3.14.10 runtime and
-CLI. Phase 9 owns installing the desktop executable and its final packaging.
+The [Windows source installer](release-hardening.md) builds and stages the
+desktop, CLI and private CPython 3.14.10 runtime. No arguments opens the
+desktop. Arguments continue to select CLI paths. The Phase 8 installation
+opens terminal Home when the desktop is absent. The
+[contributor desktop commands](phase-1-desktop.md#windows-contributor-build)
+use a contributor Python with `tauri dev`.

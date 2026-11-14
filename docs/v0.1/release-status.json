@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "version": "0.1.0",
+  "state_authority": "An exact-head CI artifact records observed candidate status.",
+  "status_without_exact_candidate_evidence": "BLOCKED",
+  "release_ready_requires": [
+    "Exact-head implementation and clean Windows installed-product verification",
+    "Verified release artifacts and no unresolved release-blocking finding",
+    "Owner disposition of Windows signing and public distribution"
+  ],
+  "signing": "UNSIGNED",
+  "public_distribution_disposition": "PENDING_OWNER",
+  "updater": "NOT_CONFIGURED",
+  "real_provider_validation": "NOT_AVAILABLE",
+  "real_provider_validation_blocks_release": false
+}

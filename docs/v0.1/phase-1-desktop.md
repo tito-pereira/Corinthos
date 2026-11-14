@@ -60,13 +60,12 @@ server serves only the optional contributor frontend.
 
 ## Windows contributor build
 
-Install the repository package into a contributor Python environment or use
-the Phase 6.5 private installation built from this branch. The desktop normally
-resolves `%LOCALAPPDATA%\Programs\Corinthos\runtime\python.exe` and launches
-the sidecar from that installation. For a contributor or CI runtime, set
-`CORINTHOS_SIDECAR_PYTHON` to an absolute path to the installed-package
-interpreter. The desktop resolves the interpreter itself and invokes a fixed
-module. WebView requests never choose the executable.
+Install the repository package into a contributor Python environment and set
+`CORINTHOS_SIDECAR_PYTHON` to its absolute interpreter path for `tauri dev`.
+The release desktop uses the private Python in `..\runtime\python.exe`
+relative to its binary. The Windows source installer creates that layout.
+The desktop invokes a fixed Python module. WebView requests never choose
+the executable.
 
 The desktop spike uses Tauri 2, React 19, TypeScript 7, Vite 8 and npm.
 The lockfiles fix frontend and Rust dependencies. Use Node 24.22.2,
@@ -78,8 +77,7 @@ cd apps/desktop
 npm ci
 npm run typecheck
 npm test
-npm run tauri -- build --no-bundle -- --locked
-.\src-tauri\target\release\corinthos-desktop.exe
+npm run tauri -- dev
 ```
 
 The Rust bridge starts one owned child, performs a bounded handshake and

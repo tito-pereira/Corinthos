@@ -107,7 +107,7 @@ function Remove-SetupTree([string] $Path, [string] $Parent) {
     }
     Assert-PlainPath $target
     if (![IO.Directory]::Exists($target)) { return }
-    [void] (Get-SetupInventory $target)
+    [void] (Get-SetupInventory $target -ProtectProjects)
     Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
 }
 
@@ -173,6 +173,70 @@ function Restore-UserPath([Microsoft.Win32.RegistryKey] $Key, $Original) {
     else { $Key.DeleteValue('Path', $false) }
 }
 
+function Get-SetupPathJournal($Paths) {
+    return (Join-Path $Paths.Programs '.Corinthos-path-journal.json')
+}
+
+function Write-SetupPathJournal($Paths, $Original) {
+    $journal = Get-SetupPathJournal $Paths
+    Assert-PlainPath $journal
+    $temp = Join-Path $Paths.Programs ('.Corinthos-path-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        [IO.File]::WriteAllText($temp, ([ordered] @{
+            schema = 1
+            exists = [bool] $Original.Exists
+            kind = $Original.Kind.ToString()
+            text = $Original.Text
+        } | ConvertTo-Json -Compress))
+        [IO.File]::Move($temp, $journal)
+    } finally { [IO.File]::Delete($temp) }
+}
+
+function Clear-SetupPathJournal($Paths) {
+    $journal = Get-SetupPathJournal $Paths
+    Assert-PlainPath $journal
+    [IO.File]::Delete($journal)
+}
+
+function Restore-SetupPathJournal($Paths, [Microsoft.Win32.RegistryKey] $Key) {
+    $journal = Get-SetupPathJournal $Paths
+    Assert-PlainPath $journal
+    if (![IO.File]::Exists($journal)) { return $false }
+    if ([IO.FileInfo]::new($journal).Length -gt 256KB) { throw 'The setup PATH journal is oversized.' }
+    $original = Get-Content -LiteralPath $journal -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($original.schema -ne 1 -or $original.exists -isnot [bool] -or $original.text -isnot [string] -or
+        $original.kind -cnotin @('String', 'ExpandString') -or $original.text.Length -ge 32767 -or
+        (!$original.exists -and $original.text)) {
+        throw 'The setup PATH journal is invalid.'
+    }
+    $kind = [Microsoft.Win32.RegistryValueKind] $original.kind
+    $current = Get-UserPath $Key
+    $oldUnowned = @($original.text.Split(';') | Where-Object { $_ -and !(Test-OwnedPathEntry $_ $Paths.Bin $kind) })
+    $newUnowned = @($current.Text.Split(';') | Where-Object { $_ -and !(Test-OwnedPathEntry $_ $Paths.Bin $current.Kind) })
+    if (($oldUnowned -join ';') -ceq ($newUnowned -join ';') -and $current.Kind -eq $kind) {
+        Restore-UserPath $Key @{ Exists = $original.exists; Kind = $kind; Text = $original.text }
+    } elseif (!@($original.text.Split(';') | Where-Object { Test-OwnedPathEntry $_ $Paths.Bin $kind }).Count) {
+        Set-OwnedUserPath $Key $current $Paths.Bin -Remove
+    }
+    Clear-SetupPathJournal $Paths
+    Send-UserPathChange
+    return $true
+}
+
+function Clear-AbandonedInstallStages($Paths) {
+    if (![IO.Directory]::Exists($Paths.Programs)) { return }
+    foreach ($entry in Get-ChildItem -LiteralPath $Paths.Programs -Directory -Force -Filter '.Corinthos-stage-*') {
+        if ($entry.Name -cnotmatch '^\.Corinthos-stage-[0-9a-f]{32}$' -or
+            ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        $marker = Join-Path $entry.FullName 'corinthos-stage.marker'
+        Assert-PlainPath $marker
+        if ([IO.File]::Exists($marker) -and [IO.FileInfo]::new($marker).Length -eq 23 -and
+            [IO.File]::ReadAllText($marker) -ceq 'corinthos-core-stage-v1') {
+            Remove-SetupTree $entry.FullName $Paths.Programs
+        }
+    }
+}
+
 function Send-UserPathChange {
     try {
         if (!('CorinthosSetup.EnvironmentChange' -as [type])) {
@@ -211,6 +275,7 @@ function Restore-PreviousInstall($Paths, [Microsoft.Win32.RegistryKey] $Key) {
         $active = Read-InstallManifest $Paths.Install
         Assert-InstalledInventory $Paths.Install $active
         if ($active.state -eq 'installed') {
+            Clear-SetupPathJournal $Paths
             if ($previousExists) {
                 $retired = Move-ToRetiredSetup $Paths.Previous $Paths.Programs
                 Clear-RetiredSetup $retired $Paths.Programs
@@ -218,10 +283,12 @@ function Restore-PreviousInstall($Paths, [Microsoft.Win32.RegistryKey] $Key) {
             return
         }
         $retired = Move-ToRetiredSetup $Paths.Install $Paths.Programs
-        if (!$previousExists) {
+        if (!(Restore-SetupPathJournal $Paths $Key) -and !$previousExists) {
             Set-OwnedUserPath $Key (Get-UserPath $Key) $Paths.Bin -Remove
             Send-UserPathChange
         }
+    } else {
+        [void] (Restore-SetupPathJournal $Paths $Key)
     }
     if ($previousExists) { [IO.Directory]::Move($Paths.Previous, $Paths.Install) }
     if ($retired) { Clear-RetiredSetup $retired $Paths.Programs }

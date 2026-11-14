@@ -75,7 +75,7 @@ try {
         [void] [IO.Directory]::CreateDirectory($directory)
     }
     $script:InstallPercent = 0
-    $candidate = New-InstallCandidate $repo $paths $work (Get-LauncherCompiler)
+    $candidate = New-PrivateRuntimeCandidate $repo $paths $work (Get-LauncherCompiler)
     $null = Test-InstallCandidate $candidate
     [IO.Directory]::Move($candidate, $paths.Install)
     $python = Join-Path $paths.Install 'runtime\python.exe'

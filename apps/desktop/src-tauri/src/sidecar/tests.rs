@@ -63,7 +63,7 @@ fn fixture_python() -> PathBuf {
         env::var_os("CORINTHOS_SIDECAR_TEST_PYTHON")
             .expect("set CORINTHOS_SIDECAR_TEST_PYTHON to the absolute test Python executable"),
     );
-    assert!(valid_override(&executable));
+    assert!(ordinary_executable(&executable));
     executable
 }
 
@@ -73,6 +73,60 @@ fn fixture(mode: &str, timeout: Duration, events: EventSink) -> Result<(Sidecar,
         events,
         timeout,
     )
+}
+
+#[test]
+fn installation_resolves_only_its_adjacent_ordinary_runtime() {
+    let base = env::temp_dir().join(format!(
+        "corinthos-installed-path-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(base.join("bin")).unwrap();
+    let executable = base.join("bin").join("corinthos-desktop.exe");
+    std::fs::write(&executable, []).unwrap();
+    assert!(installed_python(&executable).is_err());
+    std::fs::create_dir(base.join("runtime")).unwrap();
+    let python = base.join("runtime").join("python.exe");
+    std::fs::write(&python, []).unwrap();
+    #[cfg(windows)]
+    {
+        assert!(installed_python(&executable).is_err());
+        let runtime = base.join("runtime");
+        for name in ["python314.dll", "python314.zip"] {
+            std::fs::write(runtime.join(name), []).unwrap();
+        }
+        std::fs::create_dir(base.join("app")).unwrap();
+        let paths = runtime.join("python314._pth");
+        std::fs::write(&paths, "python314.zip\r\n.\r\n..\\app\r\n..\\extra\r\n").unwrap();
+        assert!(installed_python(&executable).is_err());
+        std::fs::write(&paths, "python314.zip\r\n.\r\n..\\app\r\n").unwrap();
+    }
+    assert_eq!(installed_python(&executable).unwrap(), python);
+    assert!(installed_python(&base.join("corinthos-desktop.exe")).is_err());
+    #[cfg(unix)]
+    {
+        let target = base.join("actual-runtime");
+        std::fs::rename(base.join("runtime"), &target).unwrap();
+        std::os::unix::fs::symlink(target, base.join("runtime")).unwrap();
+        assert!(installed_python(&executable).is_err());
+        std::fs::remove_file(base.join("runtime")).unwrap();
+    }
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn oversized_request_is_rejected_without_forwarding_it() {
+    let (mut sidecar, _) = fixture("normal", HANDSHAKE_TIMEOUT, no_events()).unwrap();
+    assert_eq!(
+        sidecar.send("project.status", json!({"root": "x".repeat(MAX_FRAME_BYTES)})),
+        Err("The sidecar request exceeds its size limit."),
+    );
+    assert!(sidecar.is_running());
+    sidecar.shutdown().unwrap();
 }
 
 #[test]
