@@ -30,11 +30,11 @@ def _confirmations(observation):
 
 
 @pytest.fixture
-def imported_repository(tmp_path, monkeypatch):
+def imported_repository(tmp_path, monkeypatch, request):
     monkeypatch.setattr("corinthos.user_state.state_root", lambda: tmp_path / "user-state")
     root = tmp_path / "external"
     root.mkdir()
-    _git(root, "init")
+    _git(root, "init", f"--object-format={getattr(request, 'param', 'sha1')}")
     _git(root, "config", "user.name", "Synthetic import fixture")
     _git(root, "config", "user.email", "fixture@example.invalid")
     _git(root, "config", "core.autocrlf", "false")
@@ -75,6 +75,7 @@ def _source_by_path(projection):
     }
 
 
+@pytest.mark.parametrize("imported_repository", ["sha1", "sha256"], indirect=True)
 def test_imported_context_retains_current_exact_sources_with_precedence(imported_repository):
     root, work, item, importer, imported = imported_repository
     source_file = root / "src/payment.py"
@@ -185,13 +186,19 @@ def test_context_rejects_work_change_during_repository_capture(imported_reposito
     assert "src/payment.py" in _source_by_path(context.create(item.work_item_id, "codex"))
 
 
+@pytest.mark.parametrize("imported_repository", ["sha1", "sha256"], indirect=True)
 def test_new_tracked_context_file_requires_explicit_import_refresh(imported_repository):
     root, _, item, importer, imported = imported_repository
     _write(root, "src/payment_bonus.py", "# payment bonus validated_source_marker\n")
     _git(root, "add", "src/payment_bonus.py")
     context = ContextService(root)
     previous = context.create(item.work_item_id, "codex")
-    assert "src/payment_bonus.py" not in _source_by_path(previous)
+    previous_sources = _source_by_path(previous)
+    assert "src/payment_bonus.py" not in previous_sources
+    assert (
+        "original_source_marker" in previous_sources["src/payment.py"]["capture"]["excerpt"]["text"]
+    )
+    payment = _write(root, "src/payment.py", "# payment refreshed_current_marker\n")
     observed = importer.inspect(root)
     refreshed = importer.refresh(
         root,
@@ -205,6 +212,11 @@ def test_new_tracked_context_file_requires_explicit_import_refresh(imported_repo
     selected = _source_by_path(current)["src/payment_bonus.py"]
     assert selected["capture"]["snapshot_digest"] == refreshed["snapshot_digest"]
     assert "validated_source_marker" in selected["capture"]["excerpt"]["text"]
+    current_payment = _source_by_path(current)["src/payment.py"]["capture"]
+    assert current_payment["snapshot_digest"] == refreshed["snapshot_digest"]
+    assert current_payment["sha256"] == sha256(payment.read_bytes()).hexdigest()
+    assert "refreshed_current_marker" in current_payment["excerpt"]["text"]
+    assert current.projection_digest != previous.projection_digest
     assert context.verify(previous.projection_id) == previous
 
 

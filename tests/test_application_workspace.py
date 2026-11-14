@@ -158,8 +158,9 @@ def test_v2_create_and_read_use_real_backend_and_schemas(initialized_root, wire)
     assert summary["work_items"]["total"] == 1
 
 
+@pytest.mark.parametrize(("object_format", "oid_length"), [("sha1", 40), ("sha256", 64)])
 def test_v2_import_operations_use_real_backend_and_strict_shapes(
-    tmp_path, monkeypatch, wire, capsys
+    tmp_path, monkeypatch, wire, capsys, object_format, oid_length
 ):
     monkeypatch.setattr("corinthos.user_state.state_root", lambda: tmp_path / "user-state")
     root = tmp_path / "external"
@@ -168,7 +169,7 @@ def test_v2_import_operations_use_real_backend_and_strict_shapes(
     def git(*args):
         return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
-    git("init")
+    git("init", f"--object-format={object_format}")
     git("config", "core.autocrlf", "false")
     (root / "README.md").write_text("# Imported fixture\n", encoding="utf-8")
     (root / "pyproject.toml").write_text('[project]\nname = "wire-fixture"\n', encoding="utf-8")
@@ -217,6 +218,7 @@ def test_v2_import_operations_use_real_backend_and_strict_shapes(
     assert missing["status"] == "NOT_IMPORTED" and missing["label"] is None
     observed = send("import.inspect", "import-inspect-result", limit=1)
     assert observed["label"] == "DISCOVERED" and observed["next_offset"] == 1
+    assert observed["object_format"] == object_format and len(observed["head"]) == oid_length
     assert not observed["manifest_facts_truncated"]
     assert main(["import", "inspect", str(root), "--limit", "1"]) == 0
     assert json.loads(capsys.readouterr().out) == observed
@@ -257,10 +259,14 @@ def test_v2_import_operations_use_real_backend_and_strict_shapes(
         confirmations=confirmations,
     )
     assert committed["status"] == "IMPORTED" and committed["label"] == "CONFIRMED", committed
+    assert committed["summary"]["object_format"] == object_format
     assert send("import.status", "import-status-result") == committed
     report = send("import.files", "import-files-result", limit=25)
     assert report["next_offset"] is None and len(report["files"]) == 3
     [sensitive] = [record for record in report["files"] if record["kind"] == "EXCLUDED"]
+    assert all(
+        len(row["index_oid"]) == oid_length for row in report["files"] if row is not sensitive
+    )
     assert sensitive["path"] is None and sensitive["index_oid"] is None
     assert send("import.files", "import-files-result", snapshot_digest=None) == {
         **report,
@@ -272,6 +278,17 @@ def test_v2_import_operations_use_real_backend_and_strict_shapes(
         wire("import-status-result", {**committed, "label": "CANONICAL"})
     with pytest.raises(ValidationError):
         wire("import-inspect-result", {**observed, "unexpected": 1})
+    wrong_oid = "a" * (40 if oid_length == 64 else 64)
+    with pytest.raises(ValidationError):
+        wire("import-inspect-result", {**observed, "head": wrong_oid})
+    with pytest.raises(ValidationError):
+        wire(
+            "import-status-result",
+            {**committed, "summary": {**committed["summary"], "head": wrong_oid}},
+        )
+    [visible, *_] = [row for row in report["files"] if row is not sensitive]
+    with pytest.raises(ValidationError):
+        wire("import-files-result", {**report, "files": [{**visible, "index_oid": wrong_oid}]})
     reread = send("import.inspect", "import-inspect-result")
     refreshed = send(
         "import.refresh",
@@ -293,7 +310,7 @@ def test_import_preview_stays_within_wire_limit_with_large_manifest_facts(monkey
         {
             "path": path,
             "kind": "SOURCE",
-            "index_oid": "a" * 40,
+            "index_oid": "a" * 64,
             "index_mode": "100644",
             "worktree_sha256": digest,
             "state": "CLEAN",
@@ -324,7 +341,8 @@ def test_import_preview_stays_within_wire_limit_with_large_manifest_facts(monkey
         "root": root,
         "label": "DISCOVERED",
         "policy_version": 1,
-        "head": "a" * 40,
+        "object_format": "sha256",
+        "head": "a" * 64,
         "branch": "main",
         "branch_digest": digest,
         "dirty": True,

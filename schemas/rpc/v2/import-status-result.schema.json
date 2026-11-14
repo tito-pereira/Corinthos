@@ -7,7 +7,8 @@
       "type": "object",
       "properties": {
         "policy_version": { "const": 1 },
-        "head": { "$ref": "import-common.schema.json#/$defs/head" },
+        "object_format": { "$ref": "import-common.schema.json#/$defs/objectFormat" },
+        "head": { "$ref": "import-common.schema.json#/$defs/gitOid" },
         "branch": { "$ref": "import-common.schema.json#/$defs/branch" },
         "dirty": { "type": "boolean" },
         "tracked_count": { "$ref": "import-common.schema.json#/$defs/trackedCount" },
@@ -18,7 +19,10 @@
         "candidate_count": { "$ref": "import-common.schema.json#/$defs/summaryCount" },
         "ambiguity_codes": { "$ref": "import-common.schema.json#/$defs/codes" }
       },
-      "required": ["policy_version", "head", "branch", "dirty", "tracked_count", "languages", "manifest_count", "doc_count", "test_count", "candidate_count", "ambiguity_codes"],
+      "required": ["policy_version", "object_format", "head", "branch", "dirty", "tracked_count", "languages", "manifest_count", "doc_count", "test_count", "candidate_count", "ambiguity_codes"],
+      "if": { "properties": { "object_format": { "const": "sha1" } } },
+      "then": { "properties": { "head": { "$ref": "import-common.schema.json#/$defs/sha1Oid" } } },
+      "else": { "properties": { "head": { "$ref": "import-common.schema.json#/$defs/sha256Oid" } } },
       "additionalProperties": false
     },
     "status": {

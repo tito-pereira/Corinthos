@@ -5,14 +5,16 @@ import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from hashlib import sha256
 
 import pytest
 from test_session_supervisor import SyntheticManager
 
 from corinthos.bootstrap import initialize
 from corinthos.cli import main
+from corinthos.context import ContextService
 from corinthos.contracts import ContractStore, StoreError
-from corinthos.external_import import service, storage
+from corinthos.external_import import discovery, service, storage
 from corinthos.project_registry import ProjectRegistryService
 from corinthos.project_state import ProjectStateService
 from corinthos.sessions.supervisor import SessionSupervisor
@@ -22,7 +24,7 @@ from corinthos.work.adaptive import AdaptiveWorkflowService
 
 def _git(root, *arguments):
     return subprocess.run(
-        ["git", "-c", "core.autocrlf=false", *arguments],
+        ["git", "--no-optional-locks", "-c", "core.autocrlf=false", *arguments],
         cwd=root,
         capture_output=True,
         check=True,
@@ -57,11 +59,11 @@ def _events(root):
 
 
 @pytest.fixture
-def repository(tmp_path, monkeypatch):
+def repository(tmp_path, monkeypatch, request):
     monkeypatch.setattr("corinthos.user_state.state_root", lambda: tmp_path / "user")
     root = tmp_path / "external"
     root.mkdir()
-    _git(root, "init")
+    _git(root, "init", f"--object-format={getattr(request, 'param', 'sha1')}")
     _write(root, "README.md", "# Inventory")
     _write(root, "AGENTS.md", "Authoritative repository instructions")
     _write(root, "pyproject.toml", '[project]\nname = "inventory"\n')
@@ -81,12 +83,23 @@ def repository(tmp_path, monkeypatch):
     return root
 
 
+@pytest.mark.parametrize("repository", ["sha1", "sha256"], indirect=True)
 def test_inspect_reject_and_commit_preserve_tracked_files_git_and_contract_authority(repository):
     importer = service.ExternalProjectImportService()
     baseline = _files(repository)
+    head = _git(repository, "rev-parse", "HEAD").decode().strip()
+    object_format = _git(repository, "rev-parse", "--show-object-format").decode().strip()
+    git_status = _git(repository, "status", "--porcelain=v1", "--untracked-files=all")
     original = importer.inspect(repository)
+    assert original["object_format"] == object_format
+    assert original["head"] == head and len(head) == {"sha1": 40, "sha256": 64}[object_format]
+    readme = next(row for row in original["files"] if row["path"] == "README.md")
+    assert readme["state"] == "CLEAN"
+    assert readme["index_oid"] == _git(repository, "rev-parse", "HEAD:README.md").decode().strip()
+    assert readme["worktree_sha256"] == sha256((repository / "README.md").read_bytes()).hexdigest()
     assert importer.inspect(repository) == original
     assert importer.status(repository)["status"] == "NOT_IMPORTED"
+    assert _git(repository, "status", "--porcelain=v1", "--untracked-files=all") == git_status
     assert _files(repository) == baseline
     assert not (repository / ".corinthos").exists()
     assert ProjectRegistryService().paths() == []
@@ -99,6 +112,10 @@ def test_inspect_reject_and_commit_preserve_tracked_files_git_and_contract_autho
     )
     preview = importer.inspect(repository)
     assert "DIRTY_TRACKED" in _confirm(preview)
+    changed = next(row for row in preview["files"] if row["path"] == "README.md")
+    assert changed["state"] == "MODIFIED"
+    assert changed["index_oid"] == readme["index_oid"]
+    assert changed["worktree_sha256"] != readme["worktree_sha256"]
     assert (
         importer.commit(repository, preview["discovery_digest"])["error"] == "CONFIRMATION_REQUIRED"
     )
@@ -108,6 +125,7 @@ def test_inspect_reject_and_commit_preserve_tracked_files_git_and_contract_autho
 
     result = importer.commit(repository, preview["discovery_digest"], _confirm(preview))
     assert result["status"] == "IMPORTED"
+    assert result["summary"]["object_format"] == object_format
     assert result == importer.status(repository)
     assert result == importer.commit(repository, preview["discovery_digest"], _confirm(preview))
     identity = result["project_id"]
@@ -219,15 +237,23 @@ def test_change_before_writer_reservation_cannot_publish_stale_snapshot(reposito
     assert ProjectRegistryService().paths() == []
 
 
-def test_imported_task_uses_reduced_flow_and_leaves_verification_independent(repository):
+@pytest.mark.parametrize("repository", ["sha1", "sha256"], indirect=True)
+@pytest.mark.parametrize("scope", ["TASK", "CHANGE"])
+def test_imported_reduced_flow_keeps_verification_independent(repository, scope):
     importer = service.ExternalProjectImportService()
-    _write(repository, "payment.py", "PAYMENT = 'imported_task_source_marker'\n")
-    _git(repository, "add", "payment.py")
+    _write(repository, "payment.py", "PAYMENT = 'initial_payment_source_marker'\n")
+    _write(repository, "test_payment.py", "# Payment tests\n")
+    _write(repository, "calendar.py", "CALENDAR = 'unrelated_calendar_source_marker'\n")
+    _git(repository, "add", "payment.py", "test_payment.py", "calendar.py")
     preview = importer.inspect(repository)
+    assert preview["staged_count"] == 3
+    assert "DIRTY_TRACKED" in _confirm(preview)
     result = importer.commit(repository, preview["discovery_digest"], _confirm(preview))
+    assert result["status"] == "IMPORTED"
+    _write(repository, "payment.py", "PAYMENT = 'current_payment_source_marker'\n")
     work = WorkService(repository)
     item = work.create(
-        scope_level="TASK",
+        scope_level=scope,
         objective="Inspect payment",
         acceptance_criteria=["Read payment.py"],
     )
@@ -240,15 +266,21 @@ def test_imported_task_uses_reduced_flow_and_leaves_verification_independent(rep
         session = supervisor.wait(repository, started["latest_session"]["session_id"])
         assert session.state == "SUCCEEDED" and not session.cleanup_unconfirmed
         assert session.work_item_id == item.work_item_id
-        assert "imported_task_source_marker" in manager.prompts[0]
+        assert len(manager.prompts) == 1
+        assert "current_payment_source_marker" in manager.prompts[0]
+        assert "initial_payment_source_marker" not in manager.prompts[0]
+        assert "unrelated_calendar_source_marker" not in manager.prompts[0]
         report = flow.report(item.work_item_id)
         assert report["overall_status"] == "NOT_VERIFIED"
+        assert report["flow"]["validation_state"] == "NOT_VERIFIED"
+        assert report["flow"]["workflow_ref"] is None
         assert work.get(item.work_item_id) == item
         assert _events(repository) == [(item.project_id, "EXTERNAL_PROJECT_IMPORTED")]
     finally:
         assert supervisor.close()
 
 
+@pytest.mark.parametrize("repository", ["sha1", "sha256"], indirect=True)
 def test_cli_import_refresh_preserves_previous_inventory_and_checks_integrity(repository, capsys):
     importer = service.ExternalProjectImportService()
     root = str(repository)
@@ -287,6 +319,7 @@ def test_cli_import_refresh_preserves_previous_inventory_and_checks_integrity(re
     refreshed = run(*args)
     assert refreshed["snapshot_digest"] != original
     assert refreshed["project_id"] == first["project_id"]
+    assert refreshed["summary"]["object_format"] == first["summary"]["object_format"]
     assert run(*args, expected_code=1)["error"] == "SNAPSHOT_CHANGED"
     assert importer.files(repository, original) == (old, files)
     assert snapshot.read_bytes() == original_bytes
@@ -297,3 +330,47 @@ def test_cli_import_refresh_preserves_previous_inventory_and_checks_integrity(re
     current = snapshot.with_name(f"external-import-{refreshed['snapshot_digest']}.json")
     current.write_bytes(current.read_bytes() + b" ")
     assert run("status", "--root", root, expected_code=1)["status"] == "INVALID"
+
+
+def test_phase_seven_sha1_snapshot_without_object_format_remains_readable(repository, monkeypatch):
+    importer = service.ExternalProjectImportService()
+    _write(repository, "payment.py", "PAYMENT = 'legacy_snapshot_marker'\n")
+    _git(repository, "add", "payment.py")
+    scan = discovery.scan
+
+    def legacy_scan(root):
+        path, observed = scan(root)
+        assert observed.pop("object_format") == "sha1"
+        observed["discovery_digest"] = discovery.discovery_digest(observed)
+        return path, observed
+
+    with monkeypatch.context() as patch:
+        patch.setattr(discovery, "scan", legacy_scan)
+        preview = importer.inspect(repository)
+        initial = importer.commit(repository, preview["discovery_digest"], _confirm(preview))
+    assert initial["status"] == "IMPORTED"
+    digest = initial["snapshot_digest"]
+    snapshot = repository / ".corinthos" / "snapshots" / f"external-import-{digest}.json"
+    original_bytes = snapshot.read_bytes()
+    old_data = json.loads(original_bytes)
+    assert old_data["format_version"] == 1
+    assert "object_format" not in old_data["observation"]
+    assert importer.status(repository) == initial
+    assert initial["summary"]["object_format"] == "sha1"
+    old_files = importer.files(repository, digest)
+    assert old_files[1] == old_data["observation"]["files"]
+
+    item = WorkService(repository).create(
+        scope_level="TASK", objective="Inspect payment", acceptance_criteria=["Read payment.py"]
+    )
+    context = ContextService(repository)
+    historical = context.create(item.work_item_id, "codex")
+    assert "legacy_snapshot_marker" in json.dumps(historical.canonical_payload)
+    current = importer.inspect(repository)
+    refreshed = importer.refresh(repository, digest, current["discovery_digest"], _confirm(current))
+    assert refreshed["status"] == "IMPORTED" and refreshed["snapshot_digest"] != digest
+    assert refreshed["summary"]["object_format"] == "sha1"
+    assert refreshed["project_id"] == initial["project_id"]
+    assert snapshot.read_bytes() == original_bytes
+    assert importer.files(repository, digest) == old_files
+    assert context.verify(historical.projection_id) == historical

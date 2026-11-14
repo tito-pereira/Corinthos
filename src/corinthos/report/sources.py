@@ -8,8 +8,9 @@ import stat
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
+from corinthos._paths import windows_component_is_reserved
 from corinthos.contracts import ConflictError, ContractRef, ContractStore, IntegrityError
 from corinthos.contracts.artifacts import _COMPONENT, is_link, private_directory
 from corinthos.contracts.model import ID_PATTERN, canonical_json
@@ -239,7 +240,7 @@ def _artifact_path(store, reference):
         raise IntegrityError("An evidence source needs a portable artifact path.")
     parts = relative.split("/")
     if any(
-        not _COMPONENT.fullmatch(part) or part.endswith(".") or PureWindowsPath(part).is_reserved()
+        not _COMPONENT.fullmatch(part) or part.endswith(".") or windows_component_is_reserved(part)
         for part in parts
     ):
         raise IntegrityError("An evidence source has an unsafe artifact path.")

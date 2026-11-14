@@ -7,8 +7,9 @@ import os
 import re
 import stat
 from hashlib import sha256
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
+from corinthos._paths import windows_component_is_reserved
 from corinthos.contracts import ContractRef, IntegrityError, validate_schema
 from corinthos.contracts.artifacts import is_link
 from corinthos.contracts.model import canonical_json
@@ -169,7 +170,7 @@ def _safe_directory(path):
     for part in absolute.parts[1:]:
         if (
             part in {".git", ".nukytera", ".agentforge"}
-            or PureWindowsPath(part).is_reserved()
+            or windows_component_is_reserved(part)
             or part.endswith((".", " "))
             or ":" in part
         ):
@@ -370,7 +371,7 @@ def export_report(document, destination, *, manifest=None, format="both") -> dic
     if (
         not destination.name
         or destination.name in {".", "..", ".git", ".nukytera", ".agentforge"}
-        or PureWindowsPath(destination.name).is_reserved()
+        or windows_component_is_reserved(destination.name)
         or destination.name.endswith((".", " "))
         or ":" in destination.name
     ):

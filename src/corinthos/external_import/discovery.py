@@ -13,11 +13,14 @@ import unicodedata
 from collections import Counter
 from contextlib import contextmanager
 from ctypes import wintypes
+from dataclasses import dataclass
 from functools import lru_cache
-from hashlib import sha1, sha256
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from hashlib import new as hash_new
+from hashlib import sha256
+from pathlib import Path, PurePosixPath
 from threading import Thread
 
+from corinthos._paths import windows_component_is_reserved
 from corinthos.adapters.process_control import start_process
 from corinthos.bootstrap import _root
 from corinthos.context.redaction import sanitize_text, secret_path
@@ -35,6 +38,7 @@ _MAX_PATH_BYTES = 512
 _MAX_WALK_ENTRIES = 8192
 _MAX_GIT_PAYLOAD = 2 * 1024 * 1024
 _MAX_INDEX = 8 * 1024 * 1024
+_MAX_GIT_CONFIG = 64 * 1024
 _MAX_GIT_OBJECTS = 65_536
 _MAX_GIT_OBJECT_BYTES = 512 * 1024 * 1024
 _MAX_GIT_ALLOCATION = 64 * 1024 * 1024
@@ -42,7 +46,11 @@ _GIT_TIMEOUT = 8
 _PRIVATE = {".git", ".corinthos", ".nukytera", ".agentforge"}
 _REGULAR = {"100644", "100755"}
 _MODES = _REGULAR | {"120000", "160000"}
-_OID = re.compile(r"[0-9a-f]{40}")
+_GIT_HEX = re.compile(r"[0-9a-f]+")
+_FORMAT_KEYS = (
+    r"^(core\.(repositoryformatversion|bare|worktree|sparsecheckout)"
+    r"|extensions\..*|remote\..*\.promisor)$"
+)
 _UNSAFE_PATH = re.compile(r'[\\:<>|"?*\x00-\x1f\x7f]')
 _SAFE_NAME = re.compile(r"(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9][A-Za-z0-9_.-]{0,79}")
 _SAFE_DEPENDENCY = re.compile(r"(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9][A-Za-z0-9_./-]{0,95}")
@@ -131,6 +139,28 @@ class ImportDiscoveryError(IntegrityError):
     """The selected root or a repository observation cannot be established safely."""
 
 
+@dataclass(frozen=True)
+class _GitObjectFormat:
+    name: str
+    hex_length: int
+    config_extension: bytes
+
+    def accepts(self, oid):
+        return len(oid) == self.hex_length and _GIT_HEX.fullmatch(oid) is not None
+
+    def blob_oid(self, raw):
+        header = f"blob {len(raw)}\0".encode("ascii")
+        return hash_new(self.name, header + raw, usedforsecurity=False).hexdigest()
+
+
+_GIT_FORMATS = {
+    b"sha1": _GitObjectFormat("sha1", 40, b""),
+    b"sha256": _GitObjectFormat(
+        "sha256", 64, b" repositoryformatversion = 1\n[extensions]\n objectFormat = sha256\n"
+    ),
+}
+
+
 def _fail(message):
     raise ImportDiscoveryError(message) from None
 
@@ -149,7 +179,7 @@ def _portable(value):
         or path.as_posix() != value
         or value == "."
         or any(
-            part in {".", ".."} or part.endswith((" ", ".")) or PureWindowsPath(part).is_reserved()
+            part in {".", ".."} or part.endswith((" ", ".")) or windows_component_is_reserved(part)
             for part in path.parts
         )
     ):
@@ -271,10 +301,10 @@ def _root_git(root):
     return root, gitdir
 
 
-def _read_ref(gitdir):
+def _read_ref(gitdir, object_format):
     raw, _ = _read(gitdir, "HEAD", 4096)
     head = raw.decode("utf-8").strip()
-    if _OID.fullmatch(head):
+    if object_format.accepts(head):
         return head, None
     if not head.startswith("ref: refs/heads/"):
         _fail("Git HEAD does not identify a supported branch or detached commit.")
@@ -284,7 +314,7 @@ def _read_ref(gitdir):
     loose = _read(gitdir, ref, 1024, missing_ok=True)
     if loose is not None:
         oid = loose[0].decode("ascii").strip()
-        if not _OID.fullmatch(oid):
+        if not object_format.accepts(oid):
             _fail("Git HEAD points to an unsupported local reference.")
         return oid, branch
     packed = _read(gitdir, "packed-refs", _MAX_GIT_PAYLOAD, missing_ok=True)
@@ -295,7 +325,7 @@ def _read_ref(gitdir):
             _fail("Git HEAD identifies more than one packed reference.")
         if matches:
             oid = matches[0].decode("ascii")
-            if not _OID.fullmatch(oid):
+            if not object_format.accepts(oid):
                 _fail("Git HEAD points to an unsupported packed reference.")
             return oid, branch
     if any(os.path.lexists(gitdir / name) for name in ("reftable", "logs/HEAD")):
@@ -364,7 +394,7 @@ def _git_runtime(root):
     )
 
 
-def _git_command(runtime, box, objects, *args):
+def _git_command(runtime, box, objects, *args, stdin=subprocess.DEVNULL, allow_no_match=False):
     exe, path = runtime
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     env.update(
@@ -391,7 +421,7 @@ def _git_command(runtime, box, objects, *args):
         command,
         cwd=box,
         env=env,
-        stdin=subprocess.DEVNULL,
+        stdin=stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         shell=False,
@@ -421,13 +451,73 @@ def _git_command(runtime, box, objects, *args):
         managed.finish()
         process.stdout.close()
         reader.join(timeout=1)
-    if reader.is_alive() or process.returncode or len(raw) > _MAX_GIT_PAYLOAD:
-        _fail("Git could not return a bounded, verifiable index or tree.")
+    allowed = (0, 1) if allow_no_match and not raw else (0,)
+    if reader.is_alive() or process.returncode not in allowed or len(raw) > _MAX_GIT_PAYLOAD:
+        _fail("Git could not return bounded, verifiable repository metadata.")
     return bytes(raw)
 
 
+def _detect_format(runtime, box, config):
+    # A specific stdin config source with includes disabled cannot redirect Git
+    # setup. The subprocess's actual repository is the isolated metadata.
+    if b"\0" in config:
+        _fail("Git repository format contains malformed local configuration.")
+    with tempfile.TemporaryFile(dir=box) as source:
+        source.write(config)
+        source.seek(0)
+        raw = _git_command(
+            runtime,
+            box,
+            None,
+            "config",
+            "--file",
+            "-",
+            "--no-includes",
+            "--null",
+            "--get-regexp",
+            _FORMAT_KEYS,
+            stdin=source,
+            allow_no_match=True,
+        )
+    settings = {}
+    if raw and not raw.endswith(b"\0"):
+        _fail("Git did not return complete repository format declarations.")
+    for entry in raw.split(b"\0")[:-1]:
+        key, separator, value = entry.partition(b"\n")
+        if b"\n" in value:
+            _fail("Git repository format contains malformed declarations.")
+        if key.startswith(b"remote.") and key.endswith(b".promisor"):
+            if not separator or value.lower() not in {b"false", b"no", b"off", b"0"}:
+                _fail("Partial clone Git worktrees are not supported.")
+            continue
+        if key in settings:
+            _fail("Git repository format contains ambiguous declarations.")
+        settings[key] = value if separator else None
+    version = settings.get(b"core.repositoryformatversion", b"0")
+    name = settings.get(b"extensions.objectformat", b"sha1")
+    if version not in {b"0", b"1"} or name not in _GIT_FORMATS:
+        _fail("The Git repository format or object format is unsupported.")
+    if any(key.startswith(b"extensions.") for key in settings) and (
+        version != b"1"
+        or any(
+            key.startswith(b"extensions.")
+            and key not in {b"extensions.objectformat", b"extensions.refstorage"}
+            for key in settings
+        )
+        or settings.get(b"extensions.refstorage", b"files") != b"files"
+    ):
+        _fail("The Git repository format contains unsupported or inconsistent extensions.")
+    if b"core.worktree" in settings or any(
+        settings[key] is None or settings[key].lower() not in {b"false", b"no", b"off", b"0"}
+        for key in settings
+        if key in {b"core.bare", b"core.sparsecheckout"}
+    ):
+        _fail("Bare, redirected, sparse or partial Git worktrees are not supported.")
+    return _GIT_FORMATS[name]
+
+
 @contextmanager
-def _isolated_index(root, gitdir):
+def _isolated_index(root, gitdir, runtime):
     candidates = [os.environ.get(key, "") for key in ("TMPDIR", "TEMP", "TMP")]
     if os.name == "nt":
         candidates.append(Path(os.environ.get("LOCALAPPDATA", "")) / "Temp")
@@ -439,22 +529,28 @@ def _isolated_index(root, gitdir):
     )
     if outside is None:
         _fail("Offline Git discovery requires a temporary directory outside the selected worktree.")
+    config, _ = _read(gitdir, "config", _MAX_GIT_CONFIG)
     record = _read(gitdir, "index", _MAX_INDEX, missing_ok=True)
     with tempfile.TemporaryDirectory(dir=outside, prefix="corinthos-git-read-") as temporary:
         box = Path(temporary)
         (box / "refs").mkdir()
         (box / "objects").mkdir()
         (box / "HEAD").write_bytes(b"ref: refs/heads/offline-observer\n")
-        (box / "config").write_bytes(b"[core]\n bare = true\n fsmonitor = false\n")
+        object_format = _detect_format(runtime, box, config)
+        (box / "config").write_bytes(
+            b"[core]\n bare = true\n fsmonitor = false\n" + object_format.config_extension
+        )
         if record is not None:
             (box / "index").write_bytes(record[0])
-        yield box, record
+        yield box, record, object_format
         after = _read(gitdir, "index", _MAX_INDEX, missing_ok=True)
         if (record is None) != (after is None) or (record is not None and after[0] != record[0]):
             _fail("The exact Git index changed during discovery.")
+        if _read(gitdir, "config", _MAX_GIT_CONFIG)[0] != config:
+            _fail("The Git configuration changed during discovery.")
 
 
-def _entries(raw, *, tree=False):
+def _entries(raw, object_format, *, tree=False):
     entries, spellings = {}, {}
     index = 0
     while index < len(raw):
@@ -488,15 +584,16 @@ def _entries(raw, *, tree=False):
             facts = None
             if mode not in _MODES:
                 _fail("The head tree contains an unsupported tracked entry.")
-        if not _OID.fullmatch(oid):
+        if not object_format.accepts(oid):
             _fail("Git returned an unsupported tracked object identity.")
         entries[relative] = (mode, oid, facts)
     return entries
 
 
-def _index(runtime, box):
+def _index(runtime, box, object_format):
     return _entries(
-        _git_command(runtime, box, None, "ls-files", "--stage", "--debug", "--sparse", "-z", "--")
+        _git_command(runtime, box, None, "ls-files", "--stage", "--debug", "--sparse", "-z", "--"),
+        object_format,
     )
 
 
@@ -505,10 +602,10 @@ def tracked_paths(root):
     try:
         root, gitdir = _root_git(root)
         runtime = _git_runtime(root)
-        with _isolated_index(root, gitdir) as (box, _):
+        with _isolated_index(root, gitdir, runtime) as (box, _, object_format):
             return frozenset(
                 path
-                for path, (mode, _, _) in _index(runtime, box).items()
+                for path, (mode, _, _) in _index(runtime, box, object_format).items()
                 if mode in _REGULAR and not _sensitive(path)
             )
     except (OSError, ValueError, UnicodeError, RuntimeError) as error:
@@ -658,7 +755,7 @@ def _kind(relative):
     return "OTHER_TEXT"
 
 
-def _file(root, relative, mode, oid, facts, index_info, remaining):
+def _file(root, relative, mode, oid, facts, index_info, remaining, object_format):
     sensitive = _sensitive(relative)
     observation = {
         "path": None if sensitive else relative,
@@ -718,9 +815,7 @@ def _file(root, relative, mode, oid, facts, index_info, remaining):
     if _signature(current) != _signature(info) or len(raw) > remaining:
         _fail("An indexed file changed during the bounded inventory.")
     # Compare raw Git blob identity without evaluating attributes, filters or textconv.
-    header = f"blob {len(raw)}\0".encode("ascii")
-    raw_oid = sha1(header + raw, usedforsecurity=False).hexdigest()
-    clean = raw_oid == oid
+    clean = object_format.blob_oid(raw) == oid
     if os.name != "nt" and bool(info.st_mode & stat.S_IXUSR) != (mode == "100755"):
         clean = False
     observation.update(
@@ -926,25 +1021,26 @@ def scan(root):
     try:
         root, gitdir = _root_git(root)
         runtime = _git_runtime(root)
-        head, branch = _read_ref(gitdir)
-        with _isolated_index(root, gitdir) as (box, recorded):
-            indexed = _index(runtime, box)
+        with _isolated_index(root, gitdir, runtime) as (box, recorded, object_format):
+            head, branch = _read_ref(gitdir, object_format)
+            indexed = _index(runtime, box, object_format)
             if head is None:
                 tree = {}
             else:
                 objects = _object_store(gitdir)
                 tree = _entries(
                     _git_command(runtime, box, objects, "ls-tree", "--full-tree", "-r", "-z", head),
+                    object_format,
                     tree=True,
                 )
                 _object_store(gitdir)
-            if (head, branch) != _read_ref(gitdir):
+            if (head, branch) != _read_ref(gitdir, object_format):
                 _fail("Git HEAD changed during discovery.")
             remaining = MAX_TEXT_BYTES
             files, exclusions, manifests, languages = [], set(), [], Counter()
             for relative, (mode, oid, facts) in sorted(indexed.items()):
                 observation, data, consumed, exclusion = _file(
-                    root, relative, mode, oid, facts, recorded[1], remaining
+                    root, relative, mode, oid, facts, recorded[1], remaining, object_format
                 )
                 remaining -= consumed
                 files.append(observation)
@@ -957,7 +1053,7 @@ def scan(root):
                 if language is not None and observation["kind"] in {"SOURCE", "TEST"}:
                     languages[language] += 1
             untracked_count, untracked_digest, nested = _walk_untracked(root, indexed)
-            if (head, branch) != _read_ref(gitdir):
+            if (head, branch) != _read_ref(gitdir, object_format):
                 _fail("Git HEAD changed during discovery.")
         existing_state = os.path.lexists(root / ".corinthos")
         index_digest = _identity(indexed)
@@ -1087,6 +1183,7 @@ def scan(root):
             )
         observation = {
             "policy_version": POLICY_VERSION,
+            "object_format": object_format.name,
             "head": head,
             "branch": None if branch is not None and _sensitive(branch) else branch,
             "branch_digest": None if branch is None else sha256(branch.encode("utf-8")).hexdigest(),

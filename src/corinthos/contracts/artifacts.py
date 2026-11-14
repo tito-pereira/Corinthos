@@ -6,7 +6,9 @@ import re
 import stat
 from hashlib import file_digest
 from hashlib import sha256 as _sha256
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
+
+from corinthos._paths import windows_component_is_reserved
 
 from .model import IntegrityError, StoreError
 
@@ -66,7 +68,7 @@ def verify_artifact(
         raise IntegrityError("An artifact reference requires a path and digest.")
     parts = relative_path.split("/")
     if not _SHA256.fullmatch(sha256) or any(
-        not _COMPONENT.fullmatch(part) or part.endswith(".") or PureWindowsPath(part).is_reserved()
+        not _COMPONENT.fullmatch(part) or part.endswith(".") or windows_component_is_reserved(part)
         for part in parts
     ):
         raise IntegrityError("The artifact path or digest is invalid.")

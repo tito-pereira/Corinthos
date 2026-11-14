@@ -9,5 +9,8 @@
     "next_offset": { "$ref": "import-common.schema.json#/$defs/nextOffset" }
   },
   "required": ["files", "limit", "offset", "next_offset"],
+  "if": { "properties": { "summary": { "properties": { "object_format": { "const": "sha256" } }, "type": "object" } } },
+  "then": { "properties": { "files": { "$ref": "import-common.schema.json#/$defs/sha256FileOids" } } },
+  "else": { "properties": { "files": { "$ref": "import-common.schema.json#/$defs/sha1FileOids" } } },
   "unevaluatedProperties": false
 }

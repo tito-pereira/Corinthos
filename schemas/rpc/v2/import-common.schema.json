@@ -5,7 +5,10 @@
     "root": { "type": "string", "minLength": 1, "maxLength": 4096 },
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "nullableDigest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
-    "head": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}$" }, { "type": "null" }] },
+    "objectFormat": { "enum": ["sha1", "sha256"] },
+    "sha1Oid": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}(?![\\s\\S])" },
+    "sha256Oid": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}(?![\\s\\S])" },
+    "gitOid": { "anyOf": [{ "$ref": "#/$defs/sha1Oid" }, { "$ref": "#/$defs/sha256Oid" }] },
     "branch": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
     "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
     "offset": { "type": "integer", "minimum": 0, "maximum": 1000000 },
@@ -29,7 +32,7 @@
       "properties": {
         "path": { "anyOf": [{ "$ref": "#/$defs/relativePath" }, { "type": "null" }] },
         "kind": { "enum": ["MANIFEST", "DOCUMENTATION", "TEST", "SOURCE", "CONFIGURATION", "OTHER_TEXT", "BINARY", "SYMLINK", "SUBMODULE", "EXCLUDED"] },
-        "index_oid": { "$ref": "#/$defs/head" },
+        "index_oid": { "$ref": "#/$defs/gitOid" },
         "index_mode": { "enum": ["100644", "100755", "120000", "160000"] },
         "worktree_sha256": { "$ref": "#/$defs/nullableDigest" },
         "state": { "enum": ["CLEAN", "MODIFIED", "MISSING", "UNVERIFIED"] },
@@ -51,6 +54,8 @@
     "filePage": {
       "type": "array", "maxItems": 25,
       "items": { "$ref": "#/$defs/file" }
-    }
+    },
+    "sha1FileOids": { "items": { "properties": { "index_oid": { "$ref": "#/$defs/sha1Oid" } } } },
+    "sha256FileOids": { "items": { "properties": { "index_oid": { "$ref": "#/$defs/sha256Oid" } } } }
   }
 }

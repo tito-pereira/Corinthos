@@ -141,7 +141,7 @@ Repository artifacts and public collaboration use English.
 
 ## Contributor setup
 
-Package metadata declares Python `>=3.12`. CI tests CPython 3.12 and 3.14.10
+Package metadata declares Python `>=3.12`. CI tests CPython 3.12, 3.14.10 and 3.15
 on Windows and Ubuntu. These commands use a contributor-managed CPython 3.12
 installation with pip and venv, plus Git.
 Run them from the root of a fresh checkout. Environment activation is optional
@@ -207,7 +207,7 @@ creating the environment. Keep installation inside `.venv`.
 
 The [current Python baseline](docs/decisions.md#current-python-baseline) records
 the distinction between declared compatibility and verified environments. The
-workflow targets CPython 3.12 and 3.14.10 on Linux and Windows. Clean-venv verification must
+workflow targets CPython 3.12, 3.14.10 and 3.15 on Linux and Windows. Clean-venv verification must
 identify the exact commit and environment used. Prior CI results from the runner's
 global Python do not establish the clean-venv result.
 

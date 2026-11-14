@@ -58,6 +58,7 @@ interface ImportAmbiguity {
 export interface ImportDiscovery {
   root: string;
   label: "DISCOVERED";
+  object_format: "sha1" | "sha256";
   head: string | null;
   branch: string | null;
   dirty: boolean;

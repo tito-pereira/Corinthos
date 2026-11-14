@@ -452,7 +452,7 @@ with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True))
     foreach ($entry in $files.GetEnumerator()) {
         [IO.File]::WriteAllText((Join-Path $project $entry.Key), $entry.Value)
     }
-    $null = Invoke-FixtureGit @('init', '--initial-branch=main')
+    $null = Invoke-FixtureGit @('init', '--initial-branch=main', '--object-format=sha256')
     $null = Invoke-FixtureGit @('add', '--', '.')
     $null = Invoke-FixtureGit @('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
         '-c', 'commit.gpgsign=false', 'commit', '-m', 'External fixture baseline')

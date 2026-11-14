@@ -74,9 +74,14 @@ Context only after an explicit refresh. Opening the project performs no refresh.
 ## Discovery policy v1
 
 Discovery uses bounded native Git index and tree reads from isolated temporary
-metadata outside the repository. It compares the current HEAD, branch and
-index before returning. The SHA-256 `discovery_digest` covers canonical
-repository observations, including HEAD and branch identity, index and staged
+metadata outside the repository. A bounded read of the local Git format
+settings disables includes and ignores system and user configuration. The
+scanner builds isolated metadata for the detected storage format and checks
+the local configuration, HEAD, branch and index again before returning.
+Git object IDs contain 40 lowercase hex digits for SHA-1 or 64 for SHA-256.
+Git blob verification uses the detected algorithm. Corinthos file, discovery,
+snapshot and Context digests always use SHA-256. The `discovery_digest` covers canonical
+repository observations, including object format, HEAD and branch identity, index and staged
 facts, verifiable worktree bytes, untracked inventory and the policy version.
 It excludes the local root, existing Corinthos state and incidental timestamps.
 Commit rescans against the supplied digest before initialization and checks it
@@ -85,12 +90,12 @@ or another included observation changes.
 
 | Boundary | Policy v1 behavior |
 | --- | --- |
-| Repository type | Ordinary local SHA-1 Git worktree with a compatible index and independent local objects. Bare, linked and sparse worktrees, network paths, redirected metadata, shared or alternate object storage and partial clones are unsupported. |
+| Repository type | Ordinary local Git worktree using SHA-1 or SHA-256 with a compatible index and independent local objects. Bare, linked and sparse worktrees, network paths, redirected metadata, shared or alternate object storage, partial clones and compatibility object formats are unsupported. |
 | Inventory | At most 2,048 tracked paths and 8,192 worktree entries. The index is limited to 8 MiB and Git object storage to 65,536 entries and 512 MiB. Git has an eight-second command timeout and a 2 MiB output bound. A bound or unsafe Git layout can reject a scan. |
 | File content | At most 64 KiB per eligible file and 8 MiB total content read. Large and binary files supply metadata. Unverifiable tracked state blocks import. |
 | Tracked changes | Staged or tracked worktree changes require explicit `DIRTY_TRACKED` confirmation. Discovery compares raw bytes without running Git filters, which can report differences in a line-ending-normalized checkout. |
 | Untracked files | Counts and inventory digest only, including ignored paths. Their contents are excluded from the scan and Context. |
-| Links and children | The scan avoids symlink and reparse traversal and records Git submodules as metadata. Nested repositories are identified without traversal. |
+| Links and children | The scan avoids symlink and reparse traversal and records Git submodules as metadata. Nested repositories are identified without traversal. Windows reserved component checks run lexically on both platforms. Python 3.12 uses a deterministic fallback and newer versions use the standard Windows path module. |
 | Private storage | Any top-level `.corinthos` entry in the index or HEAD prevents import, even when the working-tree copy is absent. |
 | Sensitive files | Recognized sensitive paths are excluded from content reads and their path identities are suppressed in the public observation. Excerpts are redacted before truncation. |
 | Manifests | Static parsing extracts allowlisted names and limited declarations from `package.json`, `pyproject.toml`, `Cargo.toml`, simple `requirements*.txt` and `go.mod`. Additional recognized manifests can appear as metadata. Script names are observations. |
@@ -175,11 +180,13 @@ IDs. RPC v1 remains frozen. The desktop uses feature detection for inspection,
 confirmation and status. Refresh and saved inventory inspection are available
 through the terminal and RPC.
 
-The Windows WebView fixture covers a dirty external repository, passive preview,
+The Windows WebView fixture covers a dirty external SHA-256 repository, passive preview,
 digest confirmation, preservation of tracked bytes and Git state, and a
 separately started synthetic `CHANGE` Agent Session that receives the selected
-repository marker. The imported Context tests cover provenance, ranking,
-tracking changes, refresh and redaction. Live imported-repository execution
+repository marker. Backend fixtures use real SHA-1 and SHA-256 repositories to
+exercise discovery, confirmation and imported Context. CI covers CPython 3.12,
+3.14 and 3.15 on Windows and Ubuntu. The private Windows runtime stays on 3.14.10.
+Live imported-repository execution
 requires separate native-provider evidence. The two-real-provider switch gate
 remains **NOT VERIFIED / DEFERRED** to v0.1 closure.
 [Windows desktop fixture](../../apps/desktop/test-windows.ps1) ·

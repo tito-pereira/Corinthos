@@ -67,6 +67,7 @@
         return root && normalizeWindowsPath(root) === normalizeWindowsPath(projectRoot) &&
           valueFor(panel(), "Working tree") === "Dirty" &&
           valueFor(panel(), "Tracked files") === "5" &&
+            valueFor(panel(), "Git object format") === "SHA-256" &&
           Boolean(valueFor(panel(), "HEAD")) && sha256(valueFor(panel(), "Discovery digest")) &&
           preview.includes("DISCOVERED module candidates") && preview.includes("pyproject.toml") &&
           preview.includes("README.md") && preview.includes("tests/test_payments.py");

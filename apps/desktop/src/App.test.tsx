@@ -205,7 +205,7 @@ describe("desktop external repository import", () => {
   const snapshot = "b".repeat(64);
   const repository = { ...legacy, root: "C:\\external", display_name: "external", schema_version: 9, storage: "CURRENT" as const };
   const discovery: ImportDiscovery = {
-    root: repository.root, label: "DISCOVERED", head: "c".repeat(40), branch: "main",
+    root: repository.root, label: "DISCOVERED", object_format: "sha256", head: "c".repeat(64), branch: "main",
     dirty: true, commit_allowed: true, existing_state: false, tracked_count: 5,
     languages: { Python: 2 }, manifests: [{ path: "pyproject.toml", ecosystem: "python" }],
     docs: ["<b>README.md</b>"], tests: ["tests/test_payments.py"],
@@ -246,6 +246,7 @@ describe("desktop external repository import", () => {
       ["workspace_request", { method: "import.inspect", params: { root: "C:\\external\\" } }],
     ]);
     expect(panel()?.textContent).toContain("DISCOVERED repository facts");
+    expect(panel()?.textContent).toContain("Git object formatSHA-256");
     expect(panel()?.textContent).toContain("<b>README.md</b>");
     expect(panel()?.querySelector("b")).toBeNull();
     await click("Import repository");

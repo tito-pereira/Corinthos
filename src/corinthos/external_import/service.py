@@ -27,6 +27,7 @@ _STAGE_PREFIX = ".corinthos-import-"
 
 def _view(root, state, project_id=None, entry=None, *, error=None):
     entry = entry or {}
+    summary = entry.get("summary")
     return {
         "root": str(root),
         "status": state,
@@ -34,7 +35,7 @@ def _view(root, state, project_id=None, entry=None, *, error=None):
         "project_id": project_id,
         "snapshot_digest": entry.get("snapshot_digest"),
         "discovery_digest": entry.get("discovery_digest"),
-        "summary": entry.get("summary"),
+        "summary": {"object_format": "sha1", **summary} if summary is not None else None,
         "error": error,
     }
 
@@ -108,7 +109,7 @@ def _new_intent(root, digest, confirmations):
 
 
 def _summary(observation):
-    return {
+    summary = {
         "policy_version": observation["policy_version"],
         "head": observation["head"],
         "branch": observation["branch"],
@@ -123,6 +124,9 @@ def _summary(observation):
             a["code"] for a in observation["ambiguities"] if a["code"] != "EXISTING_STATE"
         ],
     }
+    if "object_format" in observation:
+        summary["object_format"] = observation["object_format"]
+    return summary
 
 
 def _check_inputs(digest, confirmations):

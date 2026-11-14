@@ -114,6 +114,7 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
       <h4>DISCOVERED repository facts</h4>
       <dl className="facts">
         <div><dt>Git root</dt><dd><code>{preview.root}</code></dd></div>
+        <div><dt>Git object format</dt><dd>{preview.object_format === "sha256" ? "SHA-256" : preview.object_format === "sha1" ? "SHA-1" : "Unavailable"}</dd></div>
         <div><dt>HEAD</dt><dd><code>{preview.head ?? "None"}</code></dd></div>
         <div><dt>Branch</dt><dd>{preview.branch ?? "Detached"}</dd></div>
         <div><dt>Working tree</dt><dd>{preview.dirty ? "Dirty" : "Clean"}</dd></div>

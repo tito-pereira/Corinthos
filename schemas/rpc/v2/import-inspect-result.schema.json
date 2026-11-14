@@ -53,7 +53,8 @@
     "root": { "$ref": "import-common.schema.json#/$defs/root" },
     "label": { "const": "DISCOVERED" },
     "policy_version": { "const": 1 },
-    "head": { "$ref": "import-common.schema.json#/$defs/head" },
+    "object_format": { "$ref": "import-common.schema.json#/$defs/objectFormat" },
+    "head": { "$ref": "import-common.schema.json#/$defs/gitOid" },
     "branch": { "$ref": "import-common.schema.json#/$defs/branch" },
     "branch_digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
     "dirty": { "type": "boolean" },
@@ -78,6 +79,15 @@
     "offset": { "$ref": "import-common.schema.json#/$defs/offset" },
     "next_offset": { "$ref": "import-common.schema.json#/$defs/nextOffset" }
   },
-  "required": ["root", "label", "policy_version", "head", "branch", "branch_digest", "dirty", "tracked_count", "staged_count", "index_digest", "untracked_count", "untracked_digest", "manifests", "manifest_facts_truncated", "docs", "tests", "languages", "candidates", "exclusions", "ambiguities", "commit_allowed", "existing_state", "discovery_digest", "files", "limit", "offset", "next_offset"],
+  "required": ["root", "label", "policy_version", "object_format", "head", "branch", "branch_digest", "dirty", "tracked_count", "staged_count", "index_digest", "untracked_count", "untracked_digest", "manifests", "manifest_facts_truncated", "docs", "tests", "languages", "candidates", "exclusions", "ambiguities", "commit_allowed", "existing_state", "discovery_digest", "files", "limit", "offset", "next_offset"],
+  "if": { "properties": { "object_format": { "const": "sha1" } } },
+  "then": { "properties": {
+    "head": { "$ref": "import-common.schema.json#/$defs/sha1Oid" },
+    "files": { "$ref": "import-common.schema.json#/$defs/sha1FileOids" }
+  } },
+  "else": { "properties": {
+    "head": { "$ref": "import-common.schema.json#/$defs/sha256Oid" },
+    "files": { "$ref": "import-common.schema.json#/$defs/sha256FileOids" }
+  } },
   "additionalProperties": false
 }
