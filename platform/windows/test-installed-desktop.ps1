@@ -133,7 +133,11 @@ function Open-ProductDesktop([string] $Desktop, [string] $PrivatePython) {
 function Close-ProductDesktop([string[]] $ChildExecutables) {
     $process = Get-Process -Id $script:ProductDesktopId
     try {
-        Assert-Smoke ($process.CloseMainWindow() -and $process.WaitForExit(22000) -and $process.ExitCode -eq 0) 'Installed desktop did not shut down cleanly.'
+        # Hold the live handle so .NET can read the exit code after the process exits.
+        $null = $process.Handle
+        Assert-Smoke ($process.CloseMainWindow()) 'Could not request shutdown of the installed desktop.'
+        Assert-Smoke ($process.WaitForExit(22000)) 'Installed desktop shutdown timed out.'
+        Assert-Smoke ($process.ExitCode -eq 0) 'Installed desktop exited with a nonzero status.'
         Assert-Smoke (!(Find-ProductProcesses $ChildExecutables)) 'Installed desktop left a private sidecar or provider process.'
     } finally { $process.Dispose() }
     $script:ProductDesktopId = 0
