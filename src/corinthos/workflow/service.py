@@ -176,7 +176,8 @@ class WorkflowPlanner:
             raise ConflictError("The Project Contract changed. Reconcile before planning.")
         return project
 
-    def _snapshot(self, snapshot):
+    @classmethod
+    def _snapshot(cls, snapshot):
         try:
             required = {
                 "session_id",
@@ -246,7 +247,7 @@ class WorkflowPlanner:
             for key, module in draft["modules"].items():
                 if key != module["module_id"]:
                     raise ValueError
-                self._module_shape(snapshot, module)
+                cls._module_shape(snapshot, module)
             for key, decision in draft["decisions"].items():
                 if (
                     key != decision["decision_id"]
@@ -272,7 +273,7 @@ class WorkflowPlanner:
             for key, row in draft["playtest_milestones"].items():
                 if row["milestone_id"] != key:
                     raise ValueError
-            self._workflow_shape(snapshot)
+            cls._workflow_shape(snapshot)
             for key in ("published_refs", "compiled_refs"):
                 if not isinstance(snapshot[key], list):
                     raise ValueError
@@ -652,7 +653,8 @@ class WorkflowPlanner:
         ]
         module["verification_spec"] = spec
 
-    def _module_shape(self, snapshot, module):
+    @classmethod
+    def _module_shape(cls, snapshot, module):
         for key in ("module_id", "contract_id"):
             _identifier(module[key])
         for key in ("requirement_ids", "constraint_ids", "depends_on", "technology_decision_ids"):
@@ -687,8 +689,8 @@ class WorkflowPlanner:
         payload = {
             "module_id": module["module_id"],
             "purpose_and_boundaries": module["purpose_and_boundaries"],
-            "requirement_refs": self._sources(snapshot, module["requirement_ids"]),
-            "constraint_refs": self._sources(snapshot, module["constraint_ids"]),
+            "requirement_refs": cls._sources(snapshot, module["requirement_ids"]),
+            "constraint_refs": cls._sources(snapshot, module["constraint_ids"]),
             "provided_interfaces": module["provided_interfaces"],
             "consumed_interfaces": consumers,
             "technology_decision_refs": [],
@@ -706,7 +708,8 @@ class WorkflowPlanner:
             )
         )
 
-    def _workflow_shape(self, snapshot):
+    @staticmethod
+    def _workflow_shape(snapshot):
         payload = {
             "project_contract_ref": snapshot["project_ref"],
             "modules": [

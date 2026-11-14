@@ -6,6 +6,9 @@
     "importDigest": { "$ref": "import-common.schema.json#/$defs/digest" },
     "importLimit": { "$ref": "import-common.schema.json#/$defs/limit" },
     "importOffset": { "$ref": "import-common.schema.json#/$defs/offset" },
+    "desktopProvider": { "enum": ["codex", "claude"] },
+    "reviewKind": { "enum": ["PROJECT", "WORKFLOW"] },
+    "reviewSession": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])" },
     "importConfirmations": {
       "type": "array",
       "maxItems": 32,
@@ -16,6 +19,106 @@
   "allOf": [
     {
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
+    },
+    {
+      "if": { "properties": { "method": { "const": "settings.providers" } } },
+      "then": { "properties": { "params": {
+        "type": "object", "properties": { "root": { "$ref": "#/$defs/importRoot" } },
+        "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "providers.refresh" } } },
+      "then": { "required": ["id"], "properties": { "params": { "type": "object", "maxProperties": 0 } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "provider.configure" } } },
+      "then": { "required": ["id", "params"], "properties": { "params": {
+        "type": "object",
+        "properties": {
+          "root": { "$ref": "#/$defs/importRoot" },
+          "provider": { "$ref": "#/$defs/desktopProvider" },
+          "executable": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "required": ["provider", "executable"], "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "provider.reset" } } },
+      "then": { "required": ["id", "params"], "properties": { "params": {
+        "type": "object",
+        "properties": {
+          "root": { "$ref": "#/$defs/importRoot" }, "provider": { "$ref": "#/$defs/desktopProvider" }
+        },
+        "required": ["provider"], "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "review.list" } } },
+      "then": { "required": ["params"], "properties": { "params": {
+        "type": "object",
+        "properties": {
+          "root": { "$ref": "#/$defs/importRoot" }, "limit": { "$ref": "#/$defs/importLimit" },
+          "offset": { "$ref": "#/$defs/importOffset" }
+        },
+        "required": ["root"], "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "review.get" } } },
+      "then": { "required": ["params"], "properties": { "params": {
+        "type": "object",
+        "properties": {
+          "root": { "$ref": "#/$defs/importRoot" }, "kind": { "$ref": "#/$defs/reviewKind" },
+          "session_id": { "$ref": "#/$defs/reviewSession" }
+        },
+        "required": ["root", "kind", "session_id"], "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "review.defer" } } },
+      "then": { "required": ["id", "params"], "properties": { "params": {
+        "type": "object",
+        "properties": {
+          "root": { "$ref": "#/$defs/importRoot" },
+          "kind": { "$ref": "#/$defs/reviewKind" },
+          "session_id": { "$ref": "#/$defs/reviewSession" },
+          "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "digest": { "$ref": "#/$defs/importDigest" }
+        },
+        "required": ["root", "kind", "session_id", "version", "digest"], "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "command.overview" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "limit": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "offset": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "command.project" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "type": "string", "minLength": 1, "maxLength": 4096 }
+            },
+            "required": ["root"],
+            "additionalProperties": false
+          }
+        }
+      }
     },
     {
       "if": {

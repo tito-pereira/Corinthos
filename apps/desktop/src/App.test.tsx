@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { AgentSession, BackendSnapshot, ContextProjection, FlowView, ImportDiscovery, ProjectEntry, ProjectSummary, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
+import type { AgentSession, BackendSnapshot, CommandProjectCard, ContextProjection, FlowView, ImportDiscovery, ProjectEntry, ProjectSummary, ReviewDetails, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
 
 const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -142,6 +142,7 @@ describe("desktop Home and Projects", () => {
     expect(host.textContent).toContain("Current · v7");
     expect(host.textContent).toContain("project_contract · project_rev");
     expect(host.textContent).toContain("workflow_contract · workflow_rev");
+    await click("Work");
     await field("#work-objective", item.objective);
     await field("#work-scope", "CHANGE");
     await field("#work-criteria", "First criterion\nSecond criterion");
@@ -265,7 +266,259 @@ describe("desktop external repository import", () => {
     expect(panel()?.querySelector(".import-confirmed")?.textContent).toContain(snapshot);
     expect(host.querySelector(".project-list")?.textContent).toContain("Open external");
     expect(host.querySelector(".project-result")?.textContent).not.toContain("Project Contract");
+    await click("Work");
     expect(host.querySelector(".work-form")?.textContent).toContain("Create a Work Item");
+  });
+});
+
+describe("desktop Command and project navigation", () => {
+  const secondRoot = "C:\\second";
+  const projection: ContextProjection = {
+    projection_id: "projection-exact", project_id: "project", work_item_id: item.work_item_id,
+    target_provider: "codex", selector_policy_version: 1, redaction_policy_version: 1,
+    projection_digest: "e".repeat(64), source_set_digest: "f".repeat(64), created_at: item.updated_at,
+  };
+  const session: AgentSession = {
+    session_id: "session-exact", project_id: "project", work_item_id: item.work_item_id,
+    provider: "codex", provider_version: "1.2", model: null, state: "RUNNING", run_generation: 2,
+    created_at: item.updated_at, updated_at: item.updated_at, started_at: item.updated_at, finished_at: null,
+    input_tokens: 0, output_tokens: null, cached_tokens: null, duration_ms: null, reported_cost: null,
+    reported_cost_currency: null, timeout_seconds: 120, read_only: true, can_cancel: true,
+    can_recover: false, cleanup_unconfirmed: false,
+  };
+  const focus = {
+    project_id: "project", work_item_id: item.work_item_id, objective: item.objective,
+    scope_level: item.scope_level, status: item.status, stage: "EXECUTING",
+    blockers: [], next_actions: [], validation_state: "NOT_VERIFIED", validation_result_refs: [],
+    latest_session: session, latest_projection: projection, provider_continuity: null,
+  };
+  const first: CommandProjectCard = {
+    ...legacy, project_id: "project", storage: "CURRENT", schema_version: 9, error: null,
+    active_project: null, active_workflow: null, import_status: null, external_import: null,
+    work_counts: { total: 1, by_status: { OPEN: 1 }, by_scope: { CHANGE: 1 } },
+    focus_work_items: [focus], sessions: { total: 1, active: { ...session, context_projection_id: projection.projection_id }, latest_terminal: null },
+    validation: { state: "NOT_VERIFIED", latest_run: null, active_plan_refs: [], outcome: null },
+    latest_context: { ...projection, provider: "codex" }, lifecycle: null, attention: [],
+  };
+  const second: CommandProjectCard = {
+    ...first, root: secondRoot, display_name: "Second project", project_id: "second", sessions: null,
+    latest_context: null, focus_work_items: [{ ...focus, project_id: "second", stage: "PLANNING_REQUIRED", latest_session: null, latest_projection: null }],
+    validation: { ...first.validation, state: "VERIFIED" },
+    attention: [{ kind: "PLANNING_REQUIRED", owner_type: "WORK_ITEM", owner_id: item.work_item_id,
+      reason_code: "PLANNING_REQUIRED", severity: "ACTION", summary: "Plan the second Work Item.", navigation: "WORK", action_ids: [] }],
+  };
+  const unavailable: CommandProjectCard = {
+    ...first, ...missing, project_id: null, error: "PROJECT_MISSING", active_project: null,
+    focus_work_items: [], sessions: null, latest_context: null,
+  };
+  const commandMethods = [
+    ...methods, "command.overview", "command.project", "flow.status", "session.list", "session.get",
+    "session.events", "switch.status", "switch.execute", "context.list", "context.get", "context.for_session", "context.sources",
+  ];
+  const review: ReviewDetails = {
+    review: { kind: "WORKFLOW", session_id: "planning-exact", project_id: "second", version: 7,
+      state: "AWAITING_EXPLICIT_APPROVAL", digest: "a".repeat(64), expires_at: null },
+    presentation: "Exact <approved document> version and diff.",
+    approve_command: "corinthos workflow publish planning-exact",
+    can_defer: true, redactions: [],
+  };
+
+  function setup(extra: string[] = [], cards = [first, second, unavailable]) {
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") {
+        const [codex] = ready.providers.providers;
+        return { ...ready, handshake: { ...ready.handshake, methods: [...commandMethods, ...extra] },
+          providers: { providers: [codex, { ...codex, provider: "claude" }] } };
+      }
+      const { method, params } = payload;
+      switch (method) {
+        case "projects.list": return { projects: [legacy], next_offset: null };
+        case "command.overview": return { projects: params.offset ? [second] : cards, next_offset: params.offset ? null : 10 };
+        case "command.project": return params.root === secondRoot ? second : first;
+        case "project.summary": return { ...summary, root: params.root, schema_version: 9 };
+        case "work.tree": return { nodes: [{ ...item, depth: 0 }], next_offset: null };
+        case "work.get": return { ...item, acceptance_criteria: ["A concrete criterion."] };
+        case "flow.status": return {
+          ...focus, work_item_id: params.work_item_id, selected_scope: "CHANGE", recommended_scope: "TASK",
+          minimum_required_scope: "TASK", flow_kind: "CHANGE", policy_version: 1, signals: [], unknowns: [],
+          gates: [], validation_policy: null, workflow_ref: null, execution: null, latest_handoff: null,
+          report_status: "NOT_VERIFIED", can_start: false, can_complete: false,
+        };
+        case "session.list": return { sessions: [session], next_offset: null };
+        case "session.get": return session;
+        case "session.events": return { events: [], next_after_sequence: 0 };
+        case "context.for_session": return { projection };
+        case "context.list": return { projections: [projection], next_offset: null };
+        case "context.get": return projection;
+        case "context.sources": return { sources: [], next_offset: null };
+        case "switch.status": return {
+          switch_key: "a".repeat(64), project_id: "project", work_item_id: item.work_item_id,
+          source_session_id: session.session_id, source_provider: "codex", source_generation: 2,
+          source_state: "RUNNING", cleanup_unconfirmed: false, target_provider: "claude",
+          stage: "SOURCE_ACTIVE", handoff_id: null, handoff_digest: null, projection_id: null,
+          projection_digest: null, target_session_id: null, target_state: null, blocker: null,
+        };
+        case "review.list": return { reviews: [], next_offset: null };
+        case "review.get": return review;
+        case "review.defer": return { ...review.review, state: "READY_FOR_REVIEW", version: 8 };
+        default: throw new Error("Unexpected method");
+      }
+    });
+  }
+
+  function card(rootPath: string) {
+    return Array.from(host.querySelectorAll(".command-card")).find((entry) =>
+      entry.querySelector(".command-card-root")?.textContent === rootPath)!;
+  }
+
+  async function clickWithin(container: Element, label: string) {
+    const button = Array.from(container.querySelectorAll("button")).find((entry) => entry.textContent === label);
+    if (!button) throw new Error(`Button missing: ${label}`);
+    await act(async () => button.click());
+  }
+
+  it("opens exact Work, Session and Projection from Command and preserves selected Work across tabs", async () => {
+    setup();
+    await render();
+    await click("Command");
+    expect(card(first.root)?.textContent).toContain("Active sessionsession-exact");
+    expect(card(secondRoot)?.textContent).toContain("PLANNING_REQUIRED");
+    expect(card(missing.root)?.querySelector('[role="alert"]')?.textContent).toContain("PROJECT_MISSING");
+    await clickWithin(card(first.root), "Open Work Item");
+    expect(host.querySelector(".work-selection")?.textContent).toContain(`Work Item ID${item.work_item_id}`);
+    expect(host.querySelector(".work-selection")?.textContent).toContain("A concrete criterion.");
+    await click("Open Agent Session");
+    expect(host.querySelector(".session-detail h4")?.textContent).toBe(session.session_id);
+    await click("Open Context Projection");
+    expect(host.querySelector(".projection-detail")?.textContent).toContain(projection.projection_digest);
+    await click("Work");
+    expect(host.querySelector(".work-selection")?.textContent).toContain(item.work_item_id);
+    expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("project.open");
+  });
+
+  it("opens attention in the independent project and displays independent Validation state", async () => {
+    setup();
+    await render();
+    await click("Command");
+    await clickWithin(card(secondRoot), "Open Attention");
+    expect(host.querySelector(".project-result code")?.textContent).toBe(secondRoot);
+    expect(host.querySelector(".work-selection code")?.textContent).toBe(item.work_item_id);
+    await click("Validation");
+    expect(host.querySelector(".validation-view [data-status]")?.textContent).toBe("VERIFIED");
+    await click("Command");
+    await clickWithin(card(first.root), "Open Project");
+    await click("Validation");
+    expect(host.querySelector(".validation-view [data-status]")?.textContent).toBe("NOT_VERIFIED");
+  });
+
+  it("bounds overview paging, polls only while visible, and does not probe providers", async () => {
+    vi.useFakeTimers();
+    try {
+      setup();
+      await render();
+      await click("Command");
+      await click("More Command projects");
+      expect(host.querySelectorAll(".command-card")).toHaveLength(1);
+      expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "command.overview", params: { offset: 10 } }]);
+      const reads = () => invoke.mock.calls.filter(([_command, args]) => args?.method === "command.overview").length;
+      let last = reads();
+      const hide = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+      await act(async () => vi.advanceTimersByTimeAsync(4000));
+      expect(reads()).toBe(last);
+      hide.mockReturnValue(false);
+      await act(async () => vi.advanceTimersByTimeAsync(4000));
+      expect(reads()).toBe(++last);
+      await click("Refresh Command");
+      expect(reads()).toBe(++last);
+      await click("Home");
+      await act(async () => vi.advanceTimersByTimeAsync(8000));
+      expect(reads()).toBe(last);
+      expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("providers.refresh");
+      hide.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("routes the Command switch to an exact session and awaits an explicit target choice", async () => {
+    setup();
+    await render();
+    await click("Command");
+    await clickWithin(card(first.root), "Switch Provider");
+    expect(host.querySelector(".session-detail h4")?.textContent).toBe(session.session_id);
+    expect(host.querySelector<HTMLSelectElement>("#switch-target-provider")?.value).toBe("");
+    const calls = () => invoke.mock.calls.map(([_command, args]) => args?.method);
+    expect(calls()).not.toContain("switch.status");
+    await field("#switch-target-provider", "claude");
+    expect(calls()).toContain("switch.status");
+    expect(calls()).not.toContain("switch.execute");
+  });
+
+  it("opens exact frozen review evidence and defers only with explicit confirmation and CAS", async () => {
+    const withReview: CommandProjectCard = { ...second, attention: [{
+      kind: "WORKFLOW_REVIEW_PENDING", owner_type: "WORKFLOW_PLANNING", owner_id: review.review.session_id,
+      reason_code: "WORKFLOW_REVIEW_PENDING", severity: "ACTION", summary: "Review exact decision.", navigation: "OVERVIEW", action_ids: [],
+    }] };
+    setup(["review.list", "review.get", "review.defer"], [first, withReview]);
+    await render();
+    await click("Command");
+    await clickWithin(card(secondRoot), "Open Attention");
+    expect(host.querySelector(".review-presentation")?.textContent).toBe(review.presentation);
+    expect(host.querySelector(".review-detail")?.textContent).toContain(review.approve_command);
+    await click("Defer review");
+    expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("review.defer");
+    await act(async () => host.querySelector<HTMLInputElement>(".review-detail input")?.click());
+    await click("Defer review");
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "review.defer", params: {
+      root: secondRoot, kind: "WORKFLOW", session_id: review.review.session_id,
+      version: review.review.version, digest: review.review.digest,
+    } }]);
+    expect(host.textContent).toContain("Decision deferred.");
+  });
+});
+
+describe("desktop provider settings", () => {
+  it("uses cached status until explicit refresh, keeps configuration separate, and fences reset", async () => {
+    const [codex] = ready.providers.providers;
+    const observed = { ...codex, observation: "OBSERVED" };
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") return { ...ready, handshake: { ...ready.handshake,
+        methods: [...methods, "settings.providers", "providers.refresh", "provider.configure", "provider.reset"],
+      } };
+      switch (payload.method) {
+        case "projects.list": return { projects: [], next_offset: null };
+        case "providers.refresh": return [observed];
+        case "provider.configure": return [{ ...observed, configuration: "global", executable: payload.params.executable }];
+        case "provider.reset": return [observed];
+        default: throw new Error("Unexpected method");
+      }
+    });
+    await render();
+    await click("Settings");
+    expect(host.textContent).toContain("Not yet observed");
+    expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("providers.refresh");
+    await click("Refresh provider observations");
+    expect(host.textContent).toContain("Previously observed");
+    await field("#settings-provider", "codex");
+    await field("#settings-executable", "C:\\tools\\codex.exe");
+    await click("Save provider");
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "provider.configure",
+      params: { provider: "codex", executable: "C:\\tools\\codex.exe" },
+    }]);
+    await click("Reset provider");
+    expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("provider.reset");
+    await act(async () => host.querySelector<HTMLInputElement>(".provider-form input[type='checkbox']")?.click());
+    await click("Reset provider");
+    expect(invoke.mock.calls.filter(([_command, args]) => args?.method === "providers.refresh")).toHaveLength(1);
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "provider.reset", params: { provider: "codex" } }]);
+  });
+
+  it("announces missing Command methods without sending calls", async () => {
+    invoke.mockResolvedValueOnce(ready).mockResolvedValueOnce({ projects: [], next_offset: null });
+    await render();
+    await click("Command");
+    expect(host.textContent).toContain("Command is unavailable");
+    expect(invoke.mock.calls).toHaveLength(2);
   });
 });
 
@@ -329,6 +582,7 @@ describe("desktop adaptive workflow", () => {
   async function pickWork(initial: WorkItem) {
     await render();
     await click("Open Project");
+    await click("Work");
     await click(initial.objective);
   }
 

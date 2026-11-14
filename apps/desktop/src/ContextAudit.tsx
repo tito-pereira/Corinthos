@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   bridge, type AgentSession, type ContextProjection, type ContextSource,
-  type ProviderStatus, type SessionHandoff, type WorkNode,
+  type ProjectTarget, type ProviderStatus, type SessionHandoff, type WorkNode,
 } from "./bridge";
 
 function ProjectionFacts({ projection }: { projection: ContextProjection }) {
@@ -35,7 +35,7 @@ function SourceFacts({ source }: { source: ContextSource }) {
   );
 }
 
-function HandoffFacts({ handoff }: { handoff: SessionHandoff }) {
+function HandoffFacts({ handoff, openSession }: { handoff: SessionHandoff; openSession?: () => void }) {
   return (
     <div className="work-selection handoff-detail">
       <h4>{handoff.handoff_id}</h4>
@@ -50,14 +50,18 @@ function HandoffFacts({ handoff }: { handoff: SessionHandoff }) {
         <div><dt>Handoff digest</dt><dd><code>{handoff.digest}</code></dd></div>
         <div><dt>Created</dt><dd><time>{handoff.created_at}</time></dd></div>
       </dl>
+      {openSession && <button type="button" className="secondary" onClick={openSession}>Open Source Session</button>}
     </div>
   );
 }
 
-export function ContextAudit({ root, methods, providers }: {
+export function ContextAudit({ root, methods, providers, initialId, initialHandoff, openTarget }: {
   root: string;
   methods: string[];
   providers: ProviderStatus[];
+  initialId?: string;
+  initialHandoff?: boolean;
+  openTarget: (target: ProjectTarget) => void;
 }) {
   const [work, setWork] = useState<WorkNode[]>([]);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
@@ -100,6 +104,13 @@ export function ContextAudit({ root, methods, providers }: {
           const list = await bridge.sessions(root, 0);
           if (mounted) setSessions(list.sessions);
         }
+        if (initialId && initialHandoff && methods.includes("handoff.get")) {
+          const selected = await bridge.handoffGet(root, initialId);
+          if (mounted) setHandoff(selected);
+        } else if (initialId && !initialHandoff && methods.includes("context.get")) {
+          const selected = await bridge.contextGet(root, initialId);
+          if (mounted) await inspect(selected);
+        }
       } catch {
         if (mounted) setError("Could not load the context audit.");
       } finally {
@@ -108,7 +119,7 @@ export function ContextAudit({ root, methods, providers }: {
     }
     void load();
     return () => { mounted = false; };
-  }, [root, methods, canListHandoffs, canCreateHandoff]);
+  }, [root, methods, canListHandoffs, canCreateHandoff, initialId, initialHandoff]);
 
   async function run(action: () => Promise<void>, message: string) {
     if (writing.current) return;
@@ -224,6 +235,8 @@ export function ContextAudit({ root, methods, providers }: {
         <div className="work-selection projection-detail">
           <ProjectionFacts projection={projection} />
           <div className="field-row">
+            {methods.includes("work.get") && <button type="button" className="secondary" disabled={disabled}
+              onClick={() => openTarget({ tab: "work", id: projection.work_item_id })}>Open Work Item</button>}
             {methods.includes("context.verify") && <button type="button" disabled={disabled} onClick={() => void run(async () => {
               setVerification("Checking…");
               try {
@@ -265,7 +278,8 @@ export function ContextAudit({ root, methods, providers }: {
           setHandoffPage(await bridge.handoffs(root, handoffPage.next_offset!, appliedFilter));
         }, "Could not load more handoffs.")}>More handoffs</button>}
       </>}
-      {handoff && <HandoffFacts handoff={handoff} />}
+      {handoff && <HandoffFacts handoff={handoff}
+        openSession={methods.includes("session.get") ? () => openTarget({ tab: "agents", id: handoff.source_session_id }) : undefined} />}
       {canCreateHandoff && (
         <form className="work-form" onSubmit={createHandoff}>
           <fieldset disabled={disabled}>

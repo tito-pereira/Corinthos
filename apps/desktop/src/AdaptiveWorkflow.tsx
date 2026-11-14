@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { useEffect, useState, type FormEvent } from "react";
 import {
-  bridge, workScopes, type FlowView, type ProviderStatus, type WorkItem, type WorkReport, type WorkScope,
+  bridge, workScopes, type FlowView, type ProjectTarget, type ProviderStatus, type WorkItem, type WorkReport, type WorkScope,
 } from "./bridge";
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
   disabled: boolean;
   run: (action: () => Promise<void>, message: string) => Promise<void>;
   onChanged: () => Promise<void>;
+  openTarget: (target: ProjectTarget) => void;
 };
 
 function Facts({ values }: { values: Record<string, string | null> }) {
@@ -29,7 +30,7 @@ function Findings({ title, entries }: { title: string; entries: string[] }) {
   </>;
 }
 
-export function AdaptiveWorkflow({ root, item, methods, providers, disabled, run, onChanged }: Props) {
+export function AdaptiveWorkflow({ root, item, methods, providers, disabled, run, onChanged, openTarget }: Props) {
   const [flow, setFlow] = useState<FlowView | null>(null);
   const [error, setError] = useState("");
   const [scope, setScope] = useState<WorkScope | "">("");
@@ -166,6 +167,12 @@ export function AdaptiveWorkflow({ root, item, methods, providers, disabled, run
         </form>
       )}
       <div className="field-row">
+        {flow.latest_session && methods.includes("session.get") && <button type="button" className="secondary" disabled={disabled}
+          onClick={() => openTarget({ tab: "agents", id: flow.latest_session!.session_id })}>Open Agent Session</button>}
+        {flow.latest_projection && methods.includes("context.get") && <button type="button" className="secondary" disabled={disabled}
+          onClick={() => openTarget({ tab: "context", id: flow.latest_projection!.projection_id })}>Open Context Projection</button>}
+        {methods.includes("command.project") && <button type="button" className="secondary" disabled={disabled}
+          onClick={() => openTarget({ tab: "validation", id: workId })}>Open Validation</button>}
         {methods.includes("work.report") && <button type="button" disabled={disabled} onClick={() => void run(
           async () => setReport(await bridge.workReport(root, workId)), "Could not load the Work Item report.",
         )}>Show Work Item report</button>}

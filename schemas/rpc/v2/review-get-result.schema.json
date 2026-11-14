@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/review-get-result.schema.json",
+  "type": "object",
+  "properties": {
+    "review": { "$ref": "review-summary.schema.json" },
+    "presentation": { "type": ["string", "null"], "maxLength": 28672 },
+    "redactions": { "$ref": "import-common.schema.json#/$defs/codes" },
+    "approve_command": { "type": ["string", "null"], "maxLength": 180 },
+    "can_defer": { "type": "boolean" }
+  },
+  "required": ["review", "presentation", "redactions", "approve_command", "can_defer"],
+  "additionalProperties": false
+}

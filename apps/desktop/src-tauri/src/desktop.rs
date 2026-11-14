@@ -9,6 +9,15 @@ use std::sync::{
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewWindowBuilder};
 
 const WORKSPACE_METHODS: &[&str] = &[
+    "command.overview",
+    "command.project",
+    "settings.providers",
+    "providers.refresh",
+    "provider.configure",
+    "provider.reset",
+    "review.list",
+    "review.get",
+    "review.defer",
     "projects.list",
     "project.summary",
     "project.open",

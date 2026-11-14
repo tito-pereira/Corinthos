@@ -19,6 +19,8 @@ const MAX_FRAME_BYTES: usize = 65_536;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const PROJECT_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
+const PROVIDER_REFRESH_TIMEOUT: Duration = Duration::from_secs(100);
+const PROVIDER_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(45);
 const SWITCH_EXECUTE_TIMEOUT: Duration = Duration::from_secs(20);
 const IMPORT_INSPECT_TIMEOUT: Duration = Duration::from_secs(45);
 const IMPORT_WRITE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -215,6 +217,9 @@ impl Sidecar {
             .or_else(|error| self.fail(error))?;
         let timeout = match method {
             "project.open" => PROJECT_OPEN_TIMEOUT,
+            "command.overview" => PROJECT_OPEN_TIMEOUT,
+            "providers.refresh" => PROVIDER_REFRESH_TIMEOUT,
+            "provider.configure" => PROVIDER_CONFIGURATION_TIMEOUT,
             "switch.execute" => SWITCH_EXECUTE_TIMEOUT,
             "import.inspect" => IMPORT_INSPECT_TIMEOUT,
             "import.commit" | "import.refresh" => IMPORT_WRITE_TIMEOUT,

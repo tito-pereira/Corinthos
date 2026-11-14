@@ -6,12 +6,20 @@ import {
   type ProjectEntry,
   type ProjectStatus,
   type ProjectSummary,
+  type ProjectTab,
+  type ProjectTarget,
   type ProviderStatus,
 } from "./bridge";
 import { Agents } from "./Agents";
+import { Command } from "./Command";
 import { ContextAudit } from "./ContextAudit";
+import { ProjectOverview, ProjectValidation } from "./ProjectDetail";
 import { RepositoryImport } from "./RepositoryImport";
+import { Providers, ProviderSettings } from "./ProviderSettings";
 import { WorkItems } from "./WorkItems";
+
+type Screen = "Home" | "Command" | "Projects" | "Settings";
+const screens: Screen[] = ["Home", "Command", "Projects", "Settings"];
 
 const storageLabels: Record<ProjectStatus["storage"], string> = {
   ABSENT: "No database",
@@ -20,54 +28,6 @@ const storageLabels: Record<ProjectStatus["storage"], string> = {
   INVALID: "Invalid",
   UNVERIFIED: "Unverified",
 };
-
-const configurationLabels: Record<ProviderStatus["configuration"], string> = {
-  operational: "Project override",
-  initial: "Initial project choice",
-  global: "User setting",
-  default: "Automatic selection",
-};
-
-const observationLabels: Record<ProviderStatus["observation"], string> = {
-  OBSERVED: "Previously observed",
-  NOT_OBSERVED: "Not yet observed",
-  UNKNOWN: "Unknown",
-};
-
-function Providers({ providers }: { providers: ProviderStatus[] }) {
-  return (
-    <section aria-labelledby="provider-title">
-      <div className="section-heading">
-        <h2 id="provider-title">Providers</h2>
-        <span>Cached status</span>
-      </div>
-      {providers.length ? (
-        <ul className="providers">
-          {providers.map((row) => (
-            <li key={row.provider}>
-              <div className="provider-heading">
-                <h3>{row.provider}</h3>
-                <span>{observationLabels[row.observation]}</span>
-              </div>
-              <p>{row.supported ? configurationLabels[row.configuration] : "Unsupported provider"}</p>
-              {row.executable && <code>{row.executable}</code>}
-              {row.capabilities && row.observation === "OBSERVED" && (
-                <p>
-                  {row.capabilities.available ? "Available at last check" : "Unavailable at last check"}
-                  {row.capabilities.version && ` · ${row.capabilities.version}`}
-                  {row.capabilities.json_events && " · JSON events"}
-                  {row.capabilities.stdin_prompt && " · stdin"}
-                  {row.capabilities.native_resume && " · Resume"}
-                  {row.capabilities.read_only && " · Read-only"}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : <p>No providers are recorded.</p>}
-    </section>
-  );
-}
 
 function storageText(project: Pick<ProjectStatus, "storage" | "schema_version">) {
   const version = project.schema_version === null ? "" : ` · v${project.schema_version}`;
@@ -134,10 +94,16 @@ function RegistryEntry({ entry, busy, inspect, open }: {
   );
 }
 
-function Projects({ methods, providers }: { methods: string[]; providers: ProviderStatus[] }) {
-  const [view, setView] = useState<"work" | "agents" | "context">("work");
+function Workspace({ methods, providers, onProviders }: {
+  methods: string[];
+  providers: ProviderStatus[];
+  onProviders: (value: ProviderStatus[]) => void;
+}) {
+  const [screen, setScreen] = useState<Screen>("Home");
+  const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
   const [root, setRoot] = useState("");
   const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
   const [registry, setRegistry] = useState<ProjectEntry[]>([]);
   const [offset, setOffset] = useState(0);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -145,11 +111,15 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState("");
+  const openRequest = useRef(0);
   const canList = methods.includes("projects.list");
   const canOpen = methods.includes("project.open");
   const canInspect = methods.includes("project.summary");
   const canViewAgents = Boolean(project?.initialized && (project.schema_version ?? 0) >= 8 && methods.includes("session.list"));
   const canAuditContext = Boolean(project?.initialized && (project.schema_version ?? 0) >= 9 && methods.includes("context.list"));
+  const canViewWork = Boolean(project?.initialized &&
+    (project.storage === "CURRENT" || project.storage === "ABSENT") && methods.includes("work.tree"));
+  const canViewValidation = Boolean(project?.initialized && methods.includes("command.project"));
   const listRequest = useRef(0);
 
   async function loadProjects(target: number) {
@@ -175,20 +145,37 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
     return () => { listRequest.current += 1; };
   }, [canList]);
 
-  async function openProject(path: string, explicit: boolean) {
-    if (opening || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
+  async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
+    if (!path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    const request = ++openRequest.current;
     setOpening(true);
     setOpenError("");
     setProject(null);
-    setView("work");
+    setView(target);
+    setScreen("Projects");
     try {
       const result = await bridge.project(path, explicit);
       if (explicit) await loadProjects(0);
-      setProject(result);
+      if (request === openRequest.current) setProject(result);
     } catch {
-      setOpenError(explicit ? "Could not open this project." : "Could not inspect this project.");
+      if (request === openRequest.current) setOpenError(explicit
+        ? "Could not open this project. Check its private state or inspect the saved entry."
+        : "Could not inspect this project. Retry from Projects or Command.");
     } finally {
-      setOpening(false);
+      if (request === openRequest.current) setOpening(false);
+    }
+  }
+
+  function navigate(path: string, target: ProjectTarget) {
+    if (target.tab === "work" && target.id) {
+      const workId = target.id;
+      setSelectedWork((previous) => ({ ...previous, [path]: workId }));
+    }
+    if (project?.root === path) {
+      setView(target);
+      setScreen("Projects");
+    } else {
+      void openProject(path, false, target);
     }
   }
 
@@ -197,16 +184,37 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
     void openProject(root, true);
   }
 
+  const handlesProjects = screen === "Home" || screen === "Projects";
+  const tabs: { tab: ProjectTab; label: string; enabled: boolean }[] = [
+    { tab: "overview", label: "Overview", enabled: true },
+    { tab: "work", label: "Work", enabled: canViewWork },
+    { tab: "agents", label: "Agents", enabled: canViewAgents },
+    { tab: "context", label: "Context", enabled: canAuditContext },
+    { tab: "validation", label: "Validation", enabled: canViewValidation },
+  ];
+  const activeTab = tabs.some((tab) => tab.enabled && view.tab === tab.tab) ? view.tab : "overview";
+  const activeWorkId = project ? view.id ?? selectedWork[project.root] : undefined;
+
   return (
     <>
-      <section aria-labelledby="projects-title">
-        <div className="section-heading"><h2 id="projects-title">Projects</h2></div>
+      <nav className="primary-navigation" aria-label="Primary navigation">
+        {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
+          onClick={() => setScreen(name)}>{name}</button>)}
+      </nav>
+      {screen === "Command" && <Command methods={methods} open={navigate} />}
+      {screen === "Settings" && <ProviderSettings methods={methods} root={project?.root}
+        providers={providers} onProviders={onProviders} />}
+      {handlesProjects && <section aria-labelledby="projects-title">
+        <div className="section-heading">
+          <h2 id="projects-title">{screen === "Home" ? "Recent projects" : "Projects"}</h2>
+          {screen === "Home" && <button type="button" className="secondary" onClick={() => setScreen("Command")}>Open Command</button>}
+        </div>
         {!canList && <p>Project browsing is unavailable in this backend.</p>}
         {loading && canList && <p role="status">Loading projects…</p>}
         {listError && <p role="alert">{listError} <button disabled={opening} onClick={() => void loadProjects(offset)}>Retry</button></p>}
         {canList && !loading && !listError && registry.length === 0 && <p>No projects are recorded.</p>}
         <ul className="project-list">
-          {registry.map((entry) => (
+          {(screen === "Home" ? registry.slice(0, 5) : registry).map((entry) => (
             <RegistryEntry
               key={entry.root}
               entry={entry}
@@ -216,12 +224,12 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
             />
           ))}
         </ul>
-        <div className="field-row">
+        {screen === "Projects" && <div className="field-row">
           {offset > 0 && <button disabled={loading || opening} onClick={() => void loadProjects(0)}>First projects</button>}
           {nextOffset !== null && (
             <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
           )}
-        </div>
+        </div>}
         <form onSubmit={submit}>
           <label htmlFor="project-root">Project root</label>
           <div className="field-row">
@@ -246,31 +254,41 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
             if (canOpen) await openProject(importedRoot, true);
             else await loadProjects(0);
           }} />}
-      </section>
-      {project && (
+      </section>}
+      {screen === "Home" && <section aria-labelledby="provider-title">
+        <div className="section-heading"><h2 id="provider-title">Providers</h2><span>Cached status</span></div>
+        <Providers providers={providers} />
+      </section>}
+      {screen === "Projects" && project && (
         <section aria-labelledby="project-title">
           <div className="section-heading"><h2 id="project-title">Project Summary</h2></div>
           <ProjectFacts project={project} />
-          {(canViewAgents || canAuditContext) && (
-            <div className="field-row project-views" aria-label="Project views">
-              <button type="button" aria-pressed={view === "work"} onClick={() => setView("work")}>Work Items</button>
-              {canViewAgents && <button type="button" aria-pressed={view === "agents"} onClick={() => setView("agents")}>Agents</button>}
-              {canAuditContext && <button type="button" aria-pressed={view === "context"} onClick={() => setView("context")}>Context</button>}
-            </div>
+          <nav className="field-row project-views" aria-label="Project views">
+            {tabs.filter((tab) => tab.enabled).map(({ tab, label }) => <button type="button" key={tab}
+              aria-pressed={activeTab === tab} onClick={() => setView({ tab })}>{label}</button>)}
+          </nav>
+          {activeTab === "overview" && <ProjectOverview key={project.root}
+            root={project.root} methods={methods} target={view} open={navigate} />}
+          {activeTab === "agents" && (
+            <Agents key={project.root + (view.id ?? "")} root={project.root} methods={methods} providers={providers}
+              initialId={view.id} openTarget={(target) => navigate(project.root, target)} />
           )}
-          {view === "agents" && canViewAgents && (
-            <Agents key={project.root} root={project.root} methods={methods} providers={providers} />
+          {activeTab === "context" && (
+            <ContextAudit key={project.root + (view.id ?? "")} root={project.root} methods={methods} providers={providers}
+              initialId={view.id} initialHandoff={view.handoff} openTarget={(target) => navigate(project.root, target)} />
           )}
-          {view === "context" && canAuditContext && (
-            <ContextAudit key={project.root} root={project.root} methods={methods} providers={providers} />
-          )}
+          {activeTab === "validation" && <ProjectValidation key={project.root}
+            root={project.root} methods={methods} target={view} open={navigate} />}
 
-          {view === "work" && project.initialized && (project.storage === "CURRENT" || project.storage === "ABSENT") && methods.includes("work.tree") && (
+          {activeTab === "work" && (
             <WorkItems
-              key={project.root}
+              key={project.root + (view.id ?? "")}
               root={project.root}
               methods={methods}
               providers={providers}
+              initialId={activeWorkId}
+              onSelect={(id) => setSelectedWork((previous) => ({ ...previous, [project.root]: id }))}
+              openTarget={(target) => navigate(project.root, target)}
               onChange={async () => {
                 if (canInspect) {
                   const result = await bridge.project(project.root, false);
@@ -341,7 +359,7 @@ export function App() {
       <header className="masthead">
         <div>
           <h1>Corinthos</h1>
-          <p>Projects and Work Items</p>
+          <p>Local project operations</p>
         </div>
         <span className={`connection ${connection}`} role="status">
           {ready ? "Connected" : snapshot ? "Disconnected" : "Connecting…"}
@@ -365,9 +383,9 @@ export function App() {
         )}
       </section>
 
-      {ready && <Projects methods={snapshot.handshake.methods} providers={snapshot.providers.providers} />}
-
-      {ready && <Providers providers={snapshot.providers.providers} />}
+      {ready && <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
+        onProviders={(providers) => setSnapshot((current) => current?.connection === "ready"
+          ? { ...current, providers: { providers } } : current)} />}
     </main>
   );
 }
