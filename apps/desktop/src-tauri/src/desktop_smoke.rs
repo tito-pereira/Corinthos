@@ -67,6 +67,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 "Corinthos desktop smoke: pass" => "pass\n",
                 "Corinthos desktop smoke: fail [backend]" => "fail [backend]\n",
                 "Corinthos desktop smoke: fail [ipc-policy]" => "fail [ipc-policy]\n",
+                "Corinthos desktop smoke: fail [ipc-summary]" => "fail [ipc-summary]\n",
                 "Corinthos desktop smoke: fail [registry]" => "fail [registry]\n",
                 "Corinthos desktop smoke: fail [project]" => "fail [project]\n",
                 "Corinthos desktop smoke: fail [agents]" => "fail [agents]\n",
