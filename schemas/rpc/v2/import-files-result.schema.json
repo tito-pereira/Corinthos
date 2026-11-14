@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/import-files-result.schema.json",
+  "$ref": "import-status-result.schema.json#/$defs/status",
+  "properties": {
+    "files": { "$ref": "import-common.schema.json#/$defs/filePage" },
+    "limit": { "$ref": "import-common.schema.json#/$defs/limit" },
+    "offset": { "$ref": "import-common.schema.json#/$defs/offset" },
+    "next_offset": { "$ref": "import-common.schema.json#/$defs/nextOffset" }
+  },
+  "required": ["files", "limit", "offset", "next_offset"],
+  "unevaluatedProperties": false
+}

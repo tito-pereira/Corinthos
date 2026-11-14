@@ -48,6 +48,10 @@ class WorkRepository:
             if schema_version >= 7
             else []
         )
+        if schema_version >= 9:
+            from corinthos.external_import.storage import imported_project_ids
+
+            existing = sorted(set(existing) | set(imported_project_ids(self.connection)))
         return canonical, existing
 
     def row(self, work_item_id: str) -> sqlite3.Row:

@@ -35,6 +35,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
     let mode = match env::var("CORINTHOS_DESKTOP_SMOKE_START").as_deref() {
         Ok("adaptive") => "adaptive",
         Ok("adaptive-passive") => "adaptive-passive",
+        Ok("import-preview") => "import-preview",
+        Ok("import-commit") => "import-commit",
+        Ok("import-execute") => "import-execute",
         Ok("1") => "sessions",
         _ => "passive",
     };
@@ -86,6 +89,12 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 "Corinthos desktop smoke: fail [adaptive-task]" => "fail [adaptive-task]\n",
                 "Corinthos desktop smoke: fail [adaptive-session]" => "fail [adaptive-session]\n",
                 "Corinthos desktop smoke: fail [adaptive-report]" => "fail [adaptive-report]\n",
+                "Corinthos desktop smoke: fail [import-preview]" => "fail [import-preview]\n",
+                "Corinthos desktop smoke: fail [import-commit]" => "fail [import-commit]\n",
+                "Corinthos desktop smoke: fail [import-project]" => "fail [import-project]\n",
+                "Corinthos desktop smoke: fail [import-work]" => "fail [import-work]\n",
+                "Corinthos desktop smoke: fail [import-session]" => "fail [import-session]\n",
+                "Corinthos desktop smoke: fail [import-context]" => "fail [import-context]\n",
                 "Corinthos desktop smoke: fail [unexpected]" => "fail [unexpected]\n",
                 _ => return,
             };

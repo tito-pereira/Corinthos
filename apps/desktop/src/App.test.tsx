@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { AgentSession, BackendSnapshot, ContextProjection, FlowView, ProjectEntry, ProjectSummary, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
+import type { AgentSession, BackendSnapshot, ContextProjection, FlowView, ImportDiscovery, ProjectEntry, ProjectSummary, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
 
 const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -197,6 +197,74 @@ describe("desktop Home and Projects", () => {
     expect(host.textContent).toContain("Project browsing is unavailable");
     expect(host.querySelector<HTMLInputElement>("#project-root")?.disabled).toBe(true);
     expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
+  });
+});
+
+describe("desktop external repository import", () => {
+  const digest = "a".repeat(64);
+  const snapshot = "b".repeat(64);
+  const repository = { ...legacy, root: "C:\\external", display_name: "external", schema_version: 9, storage: "CURRENT" as const };
+  const discovery: ImportDiscovery = {
+    root: repository.root, label: "DISCOVERED", head: "c".repeat(40), branch: "main",
+    dirty: true, commit_allowed: true, existing_state: false, tracked_count: 5,
+    languages: { Python: 2 }, manifests: [{ path: "pyproject.toml", ecosystem: "python" }],
+    docs: ["<b>README.md</b>"], tests: ["tests/test_payments.py"],
+    candidates: [{ path: "src", ecosystem: "python" }], exclusions: ["SENSITIVE_PATH"],
+    ambiguities: [{
+      code: "DIRTY_TRACKED", explanation: "Tracked content differs from HEAD.", required: true, options: ["CONFIRM"],
+    }],
+    discovery_digest: digest,
+  };
+
+  it("keeps inspection passive and imports only after explicit ambiguity confirmation", async () => {
+    let imported = false;
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") return { ...ready, handshake: {
+        ...ready.handshake, methods: [...methods, "import.inspect", "import.commit"],
+      } };
+      switch (payload.method) {
+        case "projects.list": return { projects: imported ? [repository] : [], next_offset: null };
+        case "import.inspect": return discovery;
+        case "import.commit":
+          imported = true;
+          return { root: discovery.root, status: "IMPORTED", label: "CONFIRMED", project_id: "project-1",
+            discovery_digest: digest, snapshot_digest: snapshot, error: null };
+        case "project.open": return { ...summary, root: discovery.root, schema_version: 9, display_name: "external",
+          active_project: null, active_workflow: null };
+        case "work.tree": return { nodes: [], next_offset: null };
+        default: throw new Error("Unexpected method");
+      }
+    });
+    await render();
+    const panel = () => host.querySelector(".repository-import");
+    expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("import.inspect");
+    await field("#import-root", "C:\\external\\");
+    await click("Inspect repository");
+    expect(invoke.mock.calls).toEqual([
+      ["backend_snapshot"],
+      ["workspace_request", { method: "projects.list", params: { offset: 0 } }],
+      ["workspace_request", { method: "import.inspect", params: { root: "C:\\external\\" } }],
+    ]);
+    expect(panel()?.textContent).toContain("DISCOVERED repository facts");
+    expect(panel()?.textContent).toContain("<b>README.md</b>");
+    expect(panel()?.querySelector("b")).toBeNull();
+    await click("Import repository");
+    expect(imported).toBe(false);
+    await act(async () => panel()?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
+    await field("#import-root", discovery.root);
+    expect(panel()?.textContent).not.toContain("DISCOVERED repository facts");
+    await click("Inspect repository");
+    await click("Import repository");
+    expect(imported).toBe(false);
+    await act(async () => panel()?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
+    await click("Import repository");
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "import.commit", params: {
+      root: discovery.root, discovery_digest: digest, confirmations: ["DIRTY_TRACKED"],
+    } }]);
+    expect(panel()?.querySelector(".import-confirmed")?.textContent).toContain(snapshot);
+    expect(host.querySelector(".project-list")?.textContent).toContain("Open external");
+    expect(host.querySelector(".project-result")?.textContent).not.toContain("Project Contract");
+    expect(host.querySelector(".work-form")?.textContent).toContain("Create a Work Item");
   });
 });
 

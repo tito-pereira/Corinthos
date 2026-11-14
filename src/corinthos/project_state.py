@@ -40,6 +40,7 @@ class _ProjectSources:
     unavailable_sources: list[str]
     sessions: SessionSummary | None
     context: dict | None
+    external_import: dict | None
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def _unavailable(
     if work_items is None:
         unavailable.append("WORK_ITEMS")
     return _ProjectSources(
-        None, None, None, [], [], None, None, work_items, unavailable, sessions, context
+        None, None, None, [], [], None, None, work_items, unavailable, sessions, context, None
     )
 
 
@@ -95,6 +96,9 @@ def _inspect_sources(
     )
     lifecycle = LifecycleRepository.project_summary(connection, project_id) if schema >= 6 else None
     work_items = work.counts(connection=connection) if schema >= 7 else None
+    from corinthos.external_import.storage import pointer
+
+    imported = pointer(connection, project_id) if schema >= 9 else None
     unavailable = [
         name
         for name, absent in (
@@ -120,6 +124,7 @@ def _inspect_sources(
         unavailable,
         sessions,
         context,
+        imported,
     )
 
 

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/import-common.schema.json",
+  "$defs": {
+    "root": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nullableDigest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+    "head": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}$" }, { "type": "null" }] },
+    "branch": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 25 },
+    "offset": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "nextOffset": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000000 },
+    "trackedCount": { "type": "integer", "minimum": 0, "maximum": 2048 },
+    "summaryCount": { "type": "integer", "minimum": 0, "maximum": 16 },
+    "relativePath": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^/\\\\:]+(?:/[^/\\\\:]+)*$" },
+    "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+    "codes": {
+      "type": "array", "maxItems": 32, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/code" }
+    },
+    "languages": {
+      "type": "object", "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 64 },
+      "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 2048 }
+    },
+    "ecosystem": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": { "anyOf": [{ "$ref": "#/$defs/relativePath" }, { "type": "null" }] },
+        "kind": { "enum": ["MANIFEST", "DOCUMENTATION", "TEST", "SOURCE", "CONFIGURATION", "OTHER_TEXT", "BINARY", "SYMLINK", "SUBMODULE", "EXCLUDED"] },
+        "index_oid": { "$ref": "#/$defs/head" },
+        "index_mode": { "enum": ["100644", "100755", "120000", "160000"] },
+        "worktree_sha256": { "$ref": "#/$defs/nullableDigest" },
+        "state": { "enum": ["CLEAN", "MODIFIED", "MISSING", "UNVERIFIED"] },
+        "size": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 },
+        "content_excluded": { "type": "boolean" }
+      },
+      "required": ["path", "kind", "index_oid", "index_mode", "worktree_sha256", "state", "size", "content_excluded"],
+      "additionalProperties": false,
+      "if": { "properties": { "kind": { "const": "EXCLUDED" } } },
+      "then": {
+        "properties": {
+          "path": { "type": "null" }, "index_oid": { "type": "null" },
+          "worktree_sha256": { "type": "null" }, "size": { "type": "null" },
+          "content_excluded": { "const": true }
+        }
+      },
+      "else": { "properties": { "path": { "type": "string" }, "index_oid": { "type": "string" } } }
+    },
+    "filePage": {
+      "type": "array", "maxItems": 25,
+      "items": { "$ref": "#/$defs/file" }
+    }
+  }
+}

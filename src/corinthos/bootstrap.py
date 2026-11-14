@@ -363,9 +363,7 @@ def configure_adapter(root, provider, executable=None):
     return show_adapters(root, provider=provider)[0]
 
 
-def initialize(root, *, policy_path=None, schema_path=None, commands=None):
-    """Prepare equivalent managed instructions without creating contract authority."""
-    root = _root(root, create=True)
+def _initialize_profile(root, *, policy_path=None, schema_path=None, commands=None):
     private = root / ".corinthos"
     saved = _read_profile(private_directory(root) / "bootstrap.json") if private.exists() else None
     explicit = policy_path is not None or schema_path is not None or commands is not None
@@ -375,6 +373,20 @@ def initialize(root, *, policy_path=None, schema_path=None, commands=None):
     if saved is not None and saved != profile:
         raise ConflictError("Initialization conflicts with the saved bootstrap profile.")
     _save_profile(root, profile)
+    return profile
+
+
+def initialize_private(root):
+    """Save the installed Standard without preparing any provider instructions."""
+    _initialize_profile(_root(root))
+
+
+def initialize(root, *, policy_path=None, schema_path=None, commands=None):
+    """Prepare equivalent managed instructions without creating contract authority."""
+    root = _root(root, create=True)
+    profile = _initialize_profile(
+        root, policy_path=policy_path, schema_path=schema_path, commands=commands
+    )
     manager = _manager(profile, profile["commands"])
     prepared = [manager.prepare(provider, root) for provider in _PROVIDERS]
     return {

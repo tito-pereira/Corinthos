@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/import-inspect-result.schema.json",
+  "$defs": {
+    "pathList": {
+      "type": "array", "maxItems": 16, "uniqueItems": true,
+      "items": { "$ref": "import-common.schema.json#/$defs/relativePath" }
+    },
+    "factList": {
+      "type": "array", "maxItems": 16, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "import-common.schema.json#/$defs/relativePath" },
+        "ecosystem": { "$ref": "import-common.schema.json#/$defs/ecosystem" },
+        "name": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "dependencies": { "$ref": "#/$defs/factList" },
+        "scripts": { "$ref": "#/$defs/factList" },
+        "members": { "$ref": "#/$defs/pathList" },
+        "parsed": { "type": "boolean" }
+      },
+      "required": ["path", "ecosystem", "name", "dependencies", "scripts", "members", "parsed"],
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "import-common.schema.json#/$defs/relativePath" },
+        "ecosystem": { "$ref": "import-common.schema.json#/$defs/ecosystem" }
+      },
+      "required": ["path", "ecosystem"],
+      "additionalProperties": false
+    },
+    "ambiguity": {
+      "type": "object",
+      "properties": {
+        "code": { "$ref": "import-common.schema.json#/$defs/code" },
+        "explanation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "required": { "type": "boolean" },
+        "options": { "type": "array", "maxItems": 1, "items": { "const": "CONFIRM" } }
+      },
+      "required": ["code", "explanation", "required", "options"],
+      "additionalProperties": false,
+      "if": { "properties": { "required": { "const": true } } },
+      "then": { "properties": { "options": { "minItems": 1 } } },
+      "else": { "properties": { "options": { "maxItems": 0 } } }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "root": { "$ref": "import-common.schema.json#/$defs/root" },
+    "label": { "const": "DISCOVERED" },
+    "policy_version": { "const": 1 },
+    "head": { "$ref": "import-common.schema.json#/$defs/head" },
+    "branch": { "$ref": "import-common.schema.json#/$defs/branch" },
+    "branch_digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
+    "dirty": { "type": "boolean" },
+    "tracked_count": { "$ref": "import-common.schema.json#/$defs/trackedCount" },
+    "staged_count": { "type": "integer", "minimum": 0, "maximum": 4096 },
+    "index_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+    "untracked_count": { "type": "integer", "minimum": 0, "maximum": 8192 },
+    "untracked_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+    "manifests": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/manifest" } },
+    "manifest_facts_truncated": { "type": "boolean" },
+    "docs": { "$ref": "#/$defs/pathList" },
+    "tests": { "$ref": "#/$defs/pathList" },
+    "languages": { "$ref": "import-common.schema.json#/$defs/languages" },
+    "candidates": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/candidate" } },
+    "exclusions": { "$ref": "import-common.schema.json#/$defs/codes" },
+    "ambiguities": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/ambiguity" } },
+    "commit_allowed": { "type": "boolean" },
+    "existing_state": { "type": "boolean" },
+    "discovery_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+    "files": { "$ref": "import-common.schema.json#/$defs/filePage" },
+    "limit": { "$ref": "import-common.schema.json#/$defs/limit" },
+    "offset": { "$ref": "import-common.schema.json#/$defs/offset" },
+    "next_offset": { "$ref": "import-common.schema.json#/$defs/nextOffset" }
+  },
+  "required": ["root", "label", "policy_version", "head", "branch", "branch_digest", "dirty", "tracked_count", "staged_count", "index_digest", "untracked_count", "untracked_digest", "manifests", "manifest_facts_truncated", "docs", "tests", "languages", "candidates", "exclusions", "ambiguities", "commit_allowed", "existing_state", "discovery_digest", "files", "limit", "offset", "next_offset"],
+  "additionalProperties": false
+}

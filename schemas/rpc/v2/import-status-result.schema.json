@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/import-status-result.schema.json",
+  "$defs": {
+    "projectId": { "type": "string", "pattern": "^project-[0-9a-f]{32}$" },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "policy_version": { "const": 1 },
+        "head": { "$ref": "import-common.schema.json#/$defs/head" },
+        "branch": { "$ref": "import-common.schema.json#/$defs/branch" },
+        "dirty": { "type": "boolean" },
+        "tracked_count": { "$ref": "import-common.schema.json#/$defs/trackedCount" },
+        "languages": { "$ref": "import-common.schema.json#/$defs/languages" },
+        "manifest_count": { "$ref": "import-common.schema.json#/$defs/summaryCount" },
+        "doc_count": { "$ref": "import-common.schema.json#/$defs/summaryCount" },
+        "test_count": { "$ref": "import-common.schema.json#/$defs/summaryCount" },
+        "candidate_count": { "$ref": "import-common.schema.json#/$defs/summaryCount" },
+        "ambiguity_codes": { "$ref": "import-common.schema.json#/$defs/codes" }
+      },
+      "required": ["policy_version", "head", "branch", "dirty", "tracked_count", "languages", "manifest_count", "doc_count", "test_count", "candidate_count", "ambiguity_codes"],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "root": { "$ref": "import-common.schema.json#/$defs/root" },
+        "status": { "enum": ["IMPORTED", "NOT_IMPORTED", "INCOMPLETE", "ALREADY_MANAGED", "INVALID", "REJECTED"] },
+        "label": { "enum": ["CONFIRMED", null] },
+        "project_id": { "anyOf": [{ "$ref": "#/$defs/projectId" }, { "type": "null" }] },
+        "snapshot_digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
+        "discovery_digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
+        "summary": { "anyOf": [{ "$ref": "#/$defs/summary" }, { "type": "null" }] },
+        "error": { "anyOf": [{ "$ref": "import-common.schema.json#/$defs/code" }, { "type": "null" }] }
+      },
+      "required": ["root", "status", "label", "project_id", "snapshot_digest", "discovery_digest", "summary", "error"],
+      "if": { "properties": { "status": { "const": "IMPORTED" } } },
+      "then": {
+        "properties": {
+          "label": { "const": "CONFIRMED" }, "project_id": { "$ref": "#/$defs/projectId" },
+          "snapshot_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+          "discovery_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+          "summary": { "$ref": "#/$defs/summary" }
+        }
+      },
+      "else": {
+        "properties": { "label": { "type": "null" }, "snapshot_digest": { "type": "null" }, "discovery_digest": { "type": "null" }, "summary": { "type": "null" } }
+      }
+    }
+  },
+  "$ref": "#/$defs/status",
+  "unevaluatedProperties": false
+}

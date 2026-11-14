@@ -124,6 +124,13 @@ jobs:
           ${{ matrix.python }} -m corinthos scope assess --help
           ${{ matrix.python }} -m corinthos flow status --help
           ${{ matrix.python }} -m corinthos work report --help
+      - name: Verify Phase 7 CLI commands
+        run: |
+          ${{ matrix.python }} -m corinthos import inspect --help
+          ${{ matrix.python }} -m corinthos import commit --help
+          ${{ matrix.python }} -m corinthos import status --help
+          ${{ matrix.python }} -m corinthos import refresh --help
+          ${{ matrix.python }} -m corinthos import files --help
       - name: Verify Workflow commands
         run: |
           ${{ matrix.python }} -m corinthos workflow --help

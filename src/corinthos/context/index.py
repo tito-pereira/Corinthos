@@ -35,6 +35,11 @@ _PRIORITIES = {
             "PRIOR_SESSION",
             "HANDOFF",
             "EVIDENCE",
+            "IMPORT_REPOSITORY",
+            "IMPORT_MANIFEST",
+            "IMPORT_DOCUMENT",
+            "IMPORT_LEXICAL",
+            "IMPORT_RELATED_TEST",
         )
     )
 }
@@ -44,6 +49,11 @@ def source_key(source, *, required_handoff_id=None):
     required = source.reason == "HANDOFF" and source.identity == required_handoff_id
     priority = _PRIORITIES["WORK_ITEM" if required else source.reason]
     distance = source.capture.get("distance", 0) if source.reason in {"PARENT", "DEPENDENCY"} else 0
+    if source.reason.startswith("IMPORT_"):
+        rank = source.capture.get("selector_rank", 0)
+        if type(rank) is not int or rank < 0:
+            raise ContextError("Stored imported Context has an invalid selector rank.")
+        distance = rank
     return priority, required, distance, source.kind, source.identity, source.revision or ""
 
 

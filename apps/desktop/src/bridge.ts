@@ -48,6 +48,46 @@ export interface ProjectSummary extends ProjectStatus {
   } | null;
 }
 
+interface ImportAmbiguity {
+  code: string;
+  explanation: string;
+  required: boolean;
+  options: string[];
+}
+
+export interface ImportDiscovery {
+  root: string;
+  label: "DISCOVERED";
+  head: string | null;
+  branch: string | null;
+  dirty: boolean;
+  commit_allowed: boolean;
+  existing_state: boolean;
+  tracked_count: number;
+  languages: Record<string, number>;
+  manifests: { path: string; ecosystem: string }[];
+  docs: string[];
+  tests: string[];
+  candidates: { path: string; ecosystem: string }[];
+  exclusions: string[];
+  ambiguities: ImportAmbiguity[];
+  discovery_digest: string;
+}
+
+export type ImportResult = {
+  root: string;
+  status: "IMPORTED";
+  label: "CONFIRMED";
+  project_id: string;
+  snapshot_digest: string;
+  discovery_digest: string;
+  error: string | null;
+} | {
+  root: string;
+  status: "REJECTED" | "ALREADY_MANAGED" | "INVALID" | "INCOMPLETE" | "NOT_IMPORTED";
+  error: string | null;
+};
+
 interface ContractReference {
   contract_id: string;
   revision_id: string;
@@ -236,6 +276,10 @@ export const bridge = {
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
   project: (root: string, open: boolean) =>
     request<ProjectSummary>(open ? "project.open" : "project.summary", { root }),
+  importInspect: (root: string) => request<ImportDiscovery>("import.inspect", { root }),
+  importStatus: (root: string) => request<ImportResult>("import.status", { root }),
+  importCommit: (root: string, discovery_digest: string, confirmations: string[]) =>
+    request<ImportResult>("import.commit", { root, discovery_digest, confirmations }),
   workTree: (root: string, offset: number) =>
     request<{ nodes: WorkNode[]; next_offset: number | null }>("work.tree", { root, offset }),
   workGet: (root: string, work_item_id: string) => request<WorkItem>("work.get", { root, work_item_id }),

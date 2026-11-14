@@ -10,6 +10,7 @@ import {
 } from "./bridge";
 import { Agents } from "./Agents";
 import { ContextAudit } from "./ContextAudit";
+import { RepositoryImport } from "./RepositoryImport";
 import { WorkItems } from "./WorkItems";
 
 const storageLabels: Record<ProjectStatus["storage"], string> = {
@@ -238,6 +239,13 @@ function Projects({ methods, providers }: { methods: string[]; providers: Provid
         </form>
         {opening && <p role="status">Opening project…</p>}
         {openError && <p role="alert">{openError}</p>}
+        {methods.includes("import.inspect") && <RepositoryImport
+          canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
+          canOpen={canOpen} disabled={opening}
+          onOpen={async (importedRoot) => {
+            if (canOpen) await openProject(importedRoot, true);
+            else await loadProjects(0);
+          }} />}
       </section>
       {project && (
         <section aria-labelledby="project-title">

@@ -458,6 +458,7 @@ release. Actual results and outstanding limits remain tied to their evidence.
 - [v0.1 Deterministic Context Engine and SQLite v9](docs/v0.1/phase-4-context.md)
 - [v0.1 Provider Switch and crash-safe replay](docs/v0.1/phase-5-provider-switch.md)
 - [v0.1 Adaptive Workflow and scope-dependent gates](docs/v0.1/phase-6-adaptive-workflow.md)
+- [v0.1 External Git repository import](docs/v0.1/phase-7-external-project-import.md)
 - [Architecture and six Engines](docs/architecture.md)
 - [Eight contract types](docs/contracts.md)
 - [Project Manager tutorial, approval and service API](docs/project-manager.md)

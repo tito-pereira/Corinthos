@@ -4,8 +4,8 @@
     document.title = "Corinthos desktop smoke: " + result;
   };
 
-  const waitFor = async (predicate) => {
-    const deadline = performance.now() + 20_000;
+  const waitFor = async (predicate, timeout = 20_000) => {
+    const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
       if (predicate()) return true;
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -39,6 +39,110 @@
   );
   const adaptiveTask = "Adaptive fixture: add one local check";
   const adaptiveProject = "Adaptive fixture: inspect project planning";
+  const importChange = "Import fixture: review payments";
+  const importedOutput = "Observed the imported payments context marker.";
+
+  function importedRow() {
+    return Array.from(document.querySelectorAll(".project-list li")).find((row) => {
+      const path = text(row.querySelector("code"));
+      return path && normalizeWindowsPath(path) === normalizeWindowsPath(projectRoot);
+    });
+  }
+
+  async function verifyImport() {
+    const panel = () => document.querySelector(".import-preview");
+    const formButton = (label) => buttonNamed(".repository-import button", label);
+    const project = () => document.querySelector(".project-result");
+    if (mode !== "import-execute") {
+      const form = document.querySelector("#import-root");
+      if (!form?.matches(":enabled")) return report("fail [import-preview]");
+      setInput(form, projectRoot);
+      if (!(await waitFor(() => formButton("Inspect repository")?.matches(":enabled")))) {
+        return report("fail [import-preview]");
+      }
+      formButton("Inspect repository").form.requestSubmit(formButton("Inspect repository"));
+      if (!(await waitFor(() => {
+        const root = valueFor(panel(), "Git root");
+        const preview = text(panel());
+        return root && normalizeWindowsPath(root) === normalizeWindowsPath(projectRoot) &&
+          valueFor(panel(), "Working tree") === "Dirty" &&
+          valueFor(panel(), "Tracked files") === "5" &&
+          Boolean(valueFor(panel(), "HEAD")) && sha256(valueFor(panel(), "Discovery digest")) &&
+          preview.includes("DISCOVERED module candidates") && preview.includes("pyproject.toml") &&
+          preview.includes("README.md") && preview.includes("tests/test_payments.py");
+      }, 50_000))) return report("fail [import-preview]");
+      if (importedRow() || !formButton("Import repository")?.disabled) {
+        return report("fail [import-preview]");
+      }
+      if (mode === "import-preview") return report("pass");
+      for (const confirmation of panel().querySelectorAll('input[type="checkbox"]')) {
+        confirmation.click();
+        if (!confirmation.checked) return report("fail [import-commit]");
+      }
+      if (!(await waitFor(() => formButton("Import repository")?.matches(":enabled")))) {
+        return report("fail [import-commit]");
+      }
+      formButton("Import repository").click();
+      if (!(await waitFor(() => sha256(text(document.querySelector(".import-confirmed code"))), 125_000))) {
+        return report("fail [import-commit]");
+      }
+    } else {
+      if (!(await waitFor(() => importedRow()?.querySelector("button")?.matches(":enabled")))) {
+        return report("fail [import-project]");
+      }
+      importedRow().querySelector("button").click();
+    }
+    if (!(await waitFor(() => {
+      const selected = text(project()?.querySelector("code"));
+      return importedRow() && selected && normalizeWindowsPath(selected) === normalizeWindowsPath(projectRoot) &&
+        valueFor(project(), "Initialized") === "Yes" && valueFor(project(), "Storage") === "Current · v9" &&
+        valueFor(project(), "Project Contract") === undefined && valueFor(project(), "Workflow") === undefined &&
+        document.querySelector("#work-objective")?.matches(":enabled");
+    }))) return report("fail [import-project]");
+    if (mode === "import-commit") return report("pass");
+
+    const adaptive = () => document.querySelector(".adaptive-workflow");
+    const adaptiveAction = (label) => buttonNamed(".adaptive-workflow button", label);
+    const create = () => buttonNamed(".work-form button", "Create Work Item");
+    setInput(document.querySelector("#work-objective"), importChange);
+    setInput(document.querySelector("#work-scope"), "CHANGE");
+    setInput(document.querySelector("#work-criteria"), "Verify the payments service regression checks.");
+    if (!(await waitFor(() => create()?.matches(":enabled")))) return report("fail [import-work]");
+    create().form.requestSubmit(create());
+    if (!(await waitFor(() => valueFor(adaptive(), "Selected scope") === "CHANGE" &&
+      valueFor(adaptive(), "Stage") === "READY" && document.querySelector("#adaptive-provider")?.matches(":enabled")))) {
+      return report("fail [import-work]");
+    }
+    setInput(document.querySelector("#adaptive-provider"), "codex");
+    const start = () => adaptiveAction("Start adaptive workflow");
+    if (!(await waitFor(() => start()?.matches(":enabled")))) return report("fail [import-session]");
+    start().form.requestSubmit(start());
+    if (!(await waitFor(() => valueFor(adaptive(), "Latest session")?.startsWith("session-") &&
+      sha256(valueFor(adaptive(), "Projection digest")) && adaptiveAction("Refresh workflow")?.matches(":enabled")))) {
+      return report("fail [import-session]");
+    }
+    if (!(await waitFor(() => {
+      if (valueFor(adaptive(), "Session state") === "SUCCEEDED") return true;
+      const refresh = adaptiveAction("Refresh workflow");
+      if (refresh?.matches(":enabled")) refresh.click();
+      return false;
+    }))) return report("fail [import-session]");
+    if (valueFor(adaptive(), "Validation") !== "NOT_VERIFIED" || adaptiveAction("Complete adaptive workflow")) {
+      return report("fail [import-session]");
+    }
+    const sessionId = valueFor(adaptive(), "Latest session");
+    const projectionDigest = valueFor(adaptive(), "Projection digest");
+    const sessionButton = () => buttonNamed(".agents .session-list button", sessionId);
+    view("Agents").click();
+    if (!(await waitFor(() => sessionButton()?.matches(":enabled")))) return report("fail [import-session]");
+    sessionButton().click();
+    if (!(await waitFor(() => {
+      const detail = document.querySelector(".session-detail");
+      return valueFor(detail, "Context digest") === projectionDigest && valueFor(detail, "State") === "SUCCEEDED" &&
+        text(detail?.querySelector(".session-events"))?.includes(importedOutput);
+    }))) return report("fail [import-context]");
+    return report("pass");
+  }
 
   async function verifyAdaptive() {
     const summary = () => document.querySelector(".project-result");
@@ -146,6 +250,7 @@
       );
     });
     if (!backendReady) return report("fail [backend]");
+    if (mode.startsWith("import-")) return verifyImport();
     if (mode === "adaptive" || mode === "adaptive-passive") return verifyAdaptive();
     const startSessions = mode === "sessions";
 

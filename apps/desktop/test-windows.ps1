@@ -15,13 +15,19 @@ function Assert-Spike([bool] $Condition, [string] $Message) {
     if (!$Condition) { throw $Message }
 }
 
+function Invoke-FixtureGit([string[]] $Arguments) {
+    $output = git -C $project --no-optional-locks @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "External fixture Git command failed: $($Arguments[0])." }
+    return $output
+}
+
 function Invoke-DesktopFixture([string] $Stage) {
     $receipt = Join-Path $root "desktop-$Stage.txt"
     $env:CORINTHOS_DESKTOP_SMOKE_PROJECT = $project
     $env:CORINTHOS_DESKTOP_SMOKE_RECEIPT = $receipt
     $env:CORINTHOS_DESKTOP_SMOKE_START = if ($Stage -eq 'sessions') { '1' } else { $Stage }
     $script:desktopProcess = Start-Process -FilePath $desktopPath -WorkingDirectory $root -PassThru -WindowStyle Normal
-    $deadline = [DateTime]::UtcNow.AddSeconds(150)
+    $deadline = [DateTime]::UtcNow.AddSeconds($(if ($Stage -eq 'import-commit') { 230 } else { 150 }))
     while (![IO.File]::Exists($receipt) -and [DateTime]::UtcNow -lt $deadline) {
         if ($desktopProcess.HasExited) { throw 'The desktop exited before producing its WebView receipt.' }
         Start-Sleep -Milliseconds 250
@@ -170,6 +176,15 @@ internal static class Provider {
                 File.AppendAllText(log, "adaptive-launch" + Environment.NewLine);
                 Console.WriteLine("{\"type\":\"thread.started\",\"thread_id\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\"}");
                 Console.WriteLine("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Adaptive fixture observation\"}}");
+                Console.WriteLine("{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":1}}");
+                return 0;
+            }
+            if (input.Contains("Import fixture: review payments")) {
+                if (!input.Contains("PHASE7_PAYMENTS_REPOSITORY_MARKER") ||
+                    input.Contains("PHASE7_UNRELATED_CALENDAR_MARKER")) return 4;
+                File.AppendAllText(log, "import-change-launch" + Environment.NewLine);
+                Console.WriteLine("{\"type\":\"thread.started\",\"thread_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\"}");
+                Console.WriteLine("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Observed the imported payments context marker.\"}}");
                 Console.WriteLine("{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":1}}");
                 return 0;
             }
@@ -422,6 +437,91 @@ with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True))
     [IO.File]::WriteAllText($adaptiveCheck, $assertAdaptive)
     Invoke-PrivatePython $paths.Install @($adaptiveCheck, (Join-Path $project '.corinthos\state.db'))
     Write-Host 'Actual WebView displayed passive PROJECT planning and TASK scope/report without probing. Explicit TASK execution reused Context and Agent Sessions and produced a report without publishing a Workflow.'
+
+    $project = Join-Path $root 'external-project'
+    foreach ($name in @('src', 'tests')) {
+        [void] [IO.Directory]::CreateDirectory((Join-Path $project $name))
+    }
+    $files = @{
+        'README.md' = '# Payments'
+        'pyproject.toml' = "[project]`nname = `"payment-fixture`"`nversion = `"0.1.0`""
+        'src/payments.py' = 'MARKER = "PHASE7_PAYMENTS_REPOSITORY_MARKER"'
+        'tests/test_payments.py' = 'def test_payments(): assert True'
+        'src/calendar.py' = 'MARKER = "PHASE7_UNRELATED_CALENDAR_MARKER"'
+    }
+    foreach ($entry in $files.GetEnumerator()) {
+        [IO.File]::WriteAllText((Join-Path $project $entry.Key), $entry.Value)
+    }
+    $null = Invoke-FixtureGit @('init', '--initial-branch=main')
+    $null = Invoke-FixtureGit @('add', '--', '.')
+    $null = Invoke-FixtureGit @('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+        '-c', 'commit.gpgsign=false', 'commit', '-m', 'External fixture baseline')
+    [IO.File]::AppendAllText((Join-Path $project 'README.md'), "`nReview the payments service.")
+    $private = Join-Path $project '.corinthos'
+    $index = Join-Path $project '.git\index'
+    $config = Join-Path $project '.git\config'
+    $headBefore = Invoke-FixtureGit @('rev-parse', 'HEAD')
+    $gitBefore = (Invoke-FixtureGit @('status', '--porcelain=v1', '--untracked-files=all')) -join "`n"
+    $indexBefore = (Get-FileHash -LiteralPath $index).Hash
+    $configBefore = (Get-FileHash -LiteralPath $config).Hash
+    $fileHashes = @{}
+    foreach ($name in $files.Keys) {
+        $fileHashes[$name] = (Get-FileHash -LiteralPath (Join-Path $project $name)).Hash
+    }
+    $registryBefore = (Get-FileHash -LiteralPath $recent).Hash
+    $codexBefore = (Get-FileHash -LiteralPath $configuredLog).Hash
+    $claudeBefore = (Get-FileHash -LiteralPath $claudeLog).Hash
+    Assert-Spike ($gitBefore -ceq ' M README.md' -and ![IO.Directory]::Exists($private)) 'Unexpected external fixture baseline.'
+
+    Invoke-DesktopFixture 'import-preview'
+    Assert-Spike (![IO.Directory]::Exists($private) -and
+        ((Invoke-FixtureGit @('rev-parse', 'HEAD')) -ceq $headBefore) -and
+        ((Get-FileHash -LiteralPath $index).Hash -eq $indexBefore) -and
+        ((Get-FileHash -LiteralPath $config).Hash -eq $configBefore) -and
+        (((Invoke-FixtureGit @('status', '--porcelain=v1', '--untracked-files=all')) -join "`n") -ceq $gitBefore) -and
+        ((Get-FileHash -LiteralPath $recent).Hash -eq $registryBefore)) 'Read-only import preview changed the external project or its registry.'
+    foreach ($name in $files.Keys) {
+        Assert-Spike ((Get-FileHash -LiteralPath (Join-Path $project $name)).Hash -eq $fileHashes[$name]) 'Import preview changed tracked bytes.'
+    }
+
+    Invoke-DesktopFixture 'import-commit'
+    Assert-Spike ([IO.Directory]::Exists($private) -and
+        ((Invoke-FixtureGit @('rev-parse', 'HEAD')) -ceq $headBefore) -and
+        ((Get-FileHash -LiteralPath $index).Hash -eq $indexBefore) -and
+        ((Get-FileHash -LiteralPath $config).Hash -eq $configBefore) -and
+        (((Invoke-FixtureGit @('status', '--porcelain=v1', '--untracked-files=no')) -join "`n") -ceq $gitBefore)) 'Import commit changed tracked Git state.'
+    $untracked = @(Invoke-FixtureGit @('ls-files', '--others', '--exclude-standard'))
+    Assert-Spike ($untracked.Count -gt 0 -and @($untracked | Where-Object { $_ -notlike '.corinthos/*' }).Count -eq 0) 'Import commit wrote outside private state.'
+    foreach ($name in $files.Keys) {
+        Assert-Spike ((Get-FileHash -LiteralPath (Join-Path $project $name)).Hash -eq $fileHashes[$name]) 'Import commit changed tracked bytes.'
+    }
+    Assert-Spike (((Get-FileHash -LiteralPath $configuredLog).Hash -eq $codexBefore) -and
+        ((Get-FileHash -LiteralPath $claudeLog).Hash -eq $claudeBefore) -and ![IO.File]::Exists($autoLog)) 'Import inspection or confirmation probed a native provider.'
+
+    Invoke-DesktopFixture 'import-execute'
+    Assert-Spike (@([IO.File]::ReadAllLines($configuredLog) | Where-Object { $_ -eq 'import-change-launch' }).Count -eq 1 -and
+        ((Get-FileHash -LiteralPath $claudeLog).Hash -eq $claudeBefore) -and ![IO.File]::Exists($autoLog)) 'Imported CHANGE did not reach exactly the selected provider with relevant repository context.'
+    $assertImport = @'
+import sqlite3, sys
+from contextlib import closing
+from pathlib import Path
+
+with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True)) as db:
+    assert db.execute("PRAGMA user_version").fetchone() == (9,)
+    assert db.execute("SELECT COUNT(*) FROM contracts").fetchone() == (0,)
+    assert db.execute("SELECT COUNT(*) FROM wf_executions").fetchone() == (0,)
+    assert db.execute(
+        "SELECT w.scope_level, w.status, a.provider, a.state, a.cleanup_unconfirmed, LENGTH(p.projection_digest) "
+        "FROM agent_sessions a JOIN work_items w USING(work_item_id,project_id) "
+        "JOIN context_projections p ON p.projection_id = a.context_projection_id "
+        "AND p.work_item_id = w.work_item_id AND p.project_id = w.project_id"
+    ).fetchall() == [("CHANGE", "OPEN", "codex", "SUCCEEDED", 0, 64)]
+    assert db.execute("SELECT COUNT(*) FROM agent_sessions").fetchone() == (1,)
+'@
+    $importCheck = Join-Path $work 'check_import.py'
+    [IO.File]::WriteAllText($importCheck, $assertImport)
+    Invoke-PrivatePython $paths.Install @($importCheck, (Join-Path $private 'state.db'))
+    Write-Host 'Actual WebView previewed and confirmed a dirty external Git repository, preserved tracked bytes and Git state, then executed a CHANGE with imported payments context and reaped all fixture processes.'
 
     $prior = [IO.File]::ReadAllLines($configuredLog).Length
     $null = Invoke-PrivatePython $paths.Install @('-m','corinthos','adapters','refresh')

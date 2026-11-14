@@ -4,6 +4,7 @@
 import hashlib
 import io
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -155,6 +156,218 @@ def test_v2_create_and_read_use_real_backend_and_schemas(initialized_root, wire)
     assert summary["schema_version"] == 9
     assert summary["active_project"] is None
     assert summary["work_items"]["total"] == 1
+
+
+def test_v2_import_operations_use_real_backend_and_strict_shapes(
+    tmp_path, monkeypatch, wire, capsys
+):
+    monkeypatch.setattr("corinthos.user_state.state_root", lambda: tmp_path / "user-state")
+    root = tmp_path / "external"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
+
+    git("init")
+    git("config", "core.autocrlf", "false")
+    (root / "README.md").write_text("# Imported fixture\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text('[project]\nname = "wire-fixture"\n', encoding="utf-8")
+    (root / ".env").write_text("PASSWORD=fixture_secret\n", encoding="utf-8")
+    git("add", "--all")
+    git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "External fixture",
+    )
+    before = git("status", "--porcelain")
+    methods = {f"import.{action}" for action in ("inspect", "status", "commit", "refresh", "files")}
+    legacy = _transcript(
+        [
+            _call("system.handshake", 1, protocol_version=1),
+            _call("import.status", 2, root=str(root)),
+        ]
+    )
+    assert methods.isdisjoint(legacy[1]["result"]["methods"])
+    assert legacy[2]["error"]["code"] == -32601
+
+    def transcript(*operations):
+        handshake = _call("system.handshake", 1, protocol_version=2)
+        replies = _transcript([handshake, *operations])
+        assert methods <= set(replies[1]["result"]["methods"])
+        wire("handshake-result", replies[1]["result"])
+        for reply in replies[2:]:
+            wire("response", reply)
+        return replies[2:]
+
+    def send(method, result_schema, **params):
+        request = _call(method, 2, root=str(root), **params)
+        wire("request", request)
+        [reply] = transcript(request)
+        result = reply["result"]
+        wire(result_schema, result)
+        return result
+
+    missing = send("import.status", "import-status-result")
+    assert missing["status"] == "NOT_IMPORTED" and missing["label"] is None
+    observed = send("import.inspect", "import-inspect-result", limit=1)
+    assert observed["label"] == "DISCOVERED" and observed["next_offset"] == 1
+    assert not observed["manifest_facts_truncated"]
+    assert main(["import", "inspect", str(root), "--limit", "1"]) == 0
+    assert json.loads(capsys.readouterr().out) == observed
+    assert git("status", "--porcelain") == before and not (root / ".corinthos").exists()
+
+    digest = observed["discovery_digest"]
+    bad_calls = [
+        (_call("import.inspect", 2, root=str(root), limit=26), -32602),
+        (_call("import.status", 3, root=str(root), extra=True), -32602),
+        (_call("import.commit", 4, root=str(root), discovery_digest="bad"), -32602),
+        (_call("import.refresh", 5, root=str(root), discovery_digest=digest), -32602),
+        (_call("import.files", 6, root=str(root), offset=-1), -32602),
+    ]
+    bad_notifications = [
+        _call("import.commit", None, root=str(root), discovery_digest=digest),
+        _call(
+            "import.refresh",
+            None,
+            root=str(root),
+            discovery_digest=digest,
+            expected_snapshot_digest=digest,
+        ),
+    ]
+    for request in [*(request for request, _ in bad_calls), *bad_notifications]:
+        with pytest.raises(ValidationError):
+            wire("request", request)
+    replies = transcript(*bad_notifications, *(request for request, _ in bad_calls))
+    assert [(row["id"], row["error"]["code"]) for row in replies] == [
+        (request["id"], code) for request, code in bad_calls
+    ]
+    assert not (root / ".corinthos").exists()
+
+    confirmations = [row["code"] for row in observed["ambiguities"] if row["required"]]
+    committed = send(
+        "import.commit",
+        "import-status-result",
+        discovery_digest=digest,
+        confirmations=confirmations,
+    )
+    assert committed["status"] == "IMPORTED" and committed["label"] == "CONFIRMED", committed
+    assert send("import.status", "import-status-result") == committed
+    report = send("import.files", "import-files-result", limit=25)
+    assert report["next_offset"] is None and len(report["files"]) == 3
+    [sensitive] = [record for record in report["files"] if record["kind"] == "EXCLUDED"]
+    assert sensitive["path"] is None and sensitive["index_oid"] is None
+    assert send("import.files", "import-files-result", snapshot_digest=None) == {
+        **report,
+        "limit": 10,
+    }
+    with pytest.raises(ValidationError):
+        wire("import-files-result", {**report, "files": [{**sensitive, "path": ".env"}]})
+    with pytest.raises(ValidationError):
+        wire("import-status-result", {**committed, "label": "CANONICAL"})
+    with pytest.raises(ValidationError):
+        wire("import-inspect-result", {**observed, "unexpected": 1})
+    reread = send("import.inspect", "import-inspect-result")
+    refreshed = send(
+        "import.refresh",
+        "import-status-result",
+        discovery_digest=reread["discovery_digest"],
+        expected_snapshot_digest=committed["snapshot_digest"],
+        confirmations=confirmations,
+    )
+    assert refreshed == committed
+
+
+def test_import_preview_stays_within_wire_limit_with_large_manifest_facts(monkeypatch, wire):
+    from corinthos.external_import.service import ExternalProjectImportService
+
+    root = "/" + "x" * 4095
+    digest = "a" * 64
+    paths = [f"{index:02d}/" + "日" * 160 + "/path" for index in range(30)]
+    files = [
+        {
+            "path": path,
+            "kind": "SOURCE",
+            "index_oid": "a" * 40,
+            "index_mode": "100644",
+            "worktree_sha256": digest,
+            "state": "CLEAN",
+            "size": 0,
+            "content_excluded": False,
+        }
+        for path in paths
+    ]
+    manifests = [
+        {
+            "path": path,
+            "ecosystem": "node",
+            "name": "fixture",
+            "parsed": True,
+            "dependencies": [f"{index:02d}" + "a" * 90 for index in range(16)],
+            "scripts": [f"{index:02d}" + "s" * 70 for index in range(16)],
+            "members": paths[:16],
+        }
+        for path in paths[:16]
+    ]
+    ambiguity = {
+        "code": "DIRTY_TRACKED",
+        "explanation": "Review the exact tracked changes.",
+        "required": True,
+        "options": ["CONFIRM"],
+    }
+    observation = {
+        "root": root,
+        "label": "DISCOVERED",
+        "policy_version": 1,
+        "head": "a" * 40,
+        "branch": "main",
+        "branch_digest": digest,
+        "dirty": True,
+        "tracked_count": len(files),
+        "staged_count": 0,
+        "index_digest": digest,
+        "untracked_count": 0,
+        "untracked_digest": digest,
+        "files": files,
+        "manifests": manifests,
+        "docs": paths[:16],
+        "tests": paths[:16],
+        "languages": {"Python": len(files)},
+        "candidates": [{"path": path, "ecosystem": "node"} for path in paths[:16]],
+        "exclusions": [],
+        "ambiguities": [ambiguity],
+        "commit_allowed": True,
+        "existing_state": False,
+        "discovery_digest": digest,
+    }
+    monkeypatch.setattr(
+        ExternalProjectImportService, "inspect", lambda self, root: dict(observation)
+    )
+    found, offset, previews = [], 0, []
+    while offset is not None:
+        reply = _transcript(
+            [
+                _call("system.handshake", 1, protocol_version=2),
+                _call("import.inspect", "⭐" * 128, root=root, limit=25, offset=offset),
+            ]
+        )[2]
+        result = reply["result"]
+        wire("import-inspect-result", result)
+        assert result["manifest_facts_truncated"]
+        assert result["discovery_digest"] == digest and result["ambiguities"] == [ambiguity]
+        assert [item["path"] for item in result["manifests"]] == paths[:16]
+        assert result["docs"] == result["tests"] == paths[:16]
+        assert result["files"] and (result["next_offset"] is None or result["next_offset"] > offset)
+        found.extend(result["files"])
+        previews.append(result["manifests"])
+        offset = result["next_offset"]
+    assert found == files and len(previews) > 1
+    assert all(page == previews[0] for page in previews)
 
 
 def test_large_unicode_pages_continue_without_losing_items(monkeypatch):
