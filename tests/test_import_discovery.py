@@ -9,6 +9,7 @@ from hashlib import sha256
 import pytest
 
 from corinthos.external_import import discovery
+from corinthos.external_import.service import ExternalProjectImportService
 
 
 def _git(root, *args, data=None):
@@ -226,6 +227,37 @@ def test_missing_parent_and_gitlink_are_metadata_only(worktree):
     assert observed["untracked_count"] == 0
     assert "SUBMODULES" in _codes(observed)
     assert "vendor/linked" not in discovery.tracked_paths(worktree)
+
+
+@pytest.mark.parametrize(
+    ("relative", "stage_deletion"), [(".corinthos/state.db", False), (".CORINTHOS", True)]
+)
+def test_tracked_private_state_blocks_import_before_any_target_write(
+    worktree, relative, stage_deletion
+):
+    reserved = _write(worktree, relative, "repository-owned fixture content")
+    _git(worktree, "add", "--", relative)
+    _commit(worktree)
+    reserved.unlink()
+    if reserved.parent != worktree:
+        reserved.parent.rmdir()
+    if stage_deletion:
+        _git(worktree, "add", "-u", "--", relative)
+
+    importer = ExternalProjectImportService()
+    before = _fingerprint(worktree)
+    observed = importer.inspect(worktree)
+    assert observed["dirty"]
+    assert not observed["commit_allowed"]
+    assert "TRACKED_PRIVATE_STATE" in _codes(observed)
+    assert relative not in json.dumps(observed)
+    confirmations = [item["code"] for item in observed["ambiguities"] if item["required"]]
+    outcome = importer.commit(worktree, observed["discovery_digest"], confirmations=confirmations)
+    assert outcome["status"] == "REJECTED"
+    assert outcome["error"] == "UNSAFE_REPOSITORY_STATE"
+    assert not (worktree / ".corinthos").exists()
+    assert not (worktree / ".CORINTHOS").exists()
+    assert _fingerprint(worktree) == before
 
 
 def test_refuses_linked_metadata_alternates_and_inventory_over_budget(worktree, monkeypatch):

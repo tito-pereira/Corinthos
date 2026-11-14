@@ -161,6 +161,10 @@ def _private(relative):
     return any(part.casefold() in _PRIVATE for part in PurePosixPath(relative).parts)
 
 
+def _managed_state_path(relative):
+    return relative.split("/", 1)[0].casefold() == ".corinthos"
+
+
 def _sensitive(relative):
     return _private(relative) or secret_path(relative) or sanitize_text(relative) != relative
 
@@ -963,7 +967,11 @@ def scan(root):
             if indexed.get(path, (None, None))[:2] != tree.get(path, (None, None))[:2]
         }
         dirty_tracked = bool(staged) or any(row["state"] != "CLEAN" for row in files)
-        commit_allowed = not any(row["state"] == "UNVERIFIED" for row in files)
+        tracked_private_state = any(
+            _managed_state_path(path) for path in indexed.keys() | tree.keys()
+        )
+        unverified = any(row["state"] == "UNVERIFIED" for row in files)
+        commit_allowed = not (tracked_private_state or unverified)
         candidates = set()
         for manifest in manifests:
             parent = PurePosixPath(manifest["path"]).parent
@@ -982,7 +990,14 @@ def scan(root):
                     required=True,
                 )
             )
-        if not commit_allowed:
+        if tracked_private_state:
+            ambiguities.append(
+                _ambiguity(
+                    "TRACKED_PRIVATE_STATE",
+                    "Git tracks the reserved root directory for Corinthos private state.",
+                )
+            )
+        if unverified:
             ambiguities.append(
                 _ambiguity(
                     "UNVERIFIED_TRACKED", "At least one tracked file cannot be identified safely."

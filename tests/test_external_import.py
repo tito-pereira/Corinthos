@@ -4,6 +4,7 @@
 import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
 from test_session_supervisor import SyntheticManager
@@ -196,6 +197,26 @@ def test_registry_failure_is_recoverable_and_never_creates_files_inside_source(
     assert result["snapshot_digest"] == outcome["snapshot_digest"]
     assert result["error"] is None
     assert ProjectRegistryService().paths() == [str(repository)]
+
+
+def test_change_before_writer_reservation_cannot_publish_stale_snapshot(repository, monkeypatch):
+    importer = service.ExternalProjectImportService()
+    preview = importer.inspect(repository)
+    actual = service.LifecycleRepository.transaction
+    with monkeypatch.context() as patch:
+
+        @contextmanager
+        def changed(lifecycle):
+            _write(repository, "README.md", "# Edited before the SQLite write reservation")
+            with actual(lifecycle) as connection:
+                yield connection
+
+        patch.setattr(service.LifecycleRepository, "transaction", changed)
+        result = importer.commit(repository, preview["discovery_digest"], _confirm(preview))
+
+    assert result["status"] == "INCOMPLETE" and result["error"] == "REPOSITORY_CHANGED"
+    assert _events(repository) == []
+    assert ProjectRegistryService().paths() == []
 
 
 def test_imported_task_uses_reduced_flow_and_leaves_verification_independent(repository):

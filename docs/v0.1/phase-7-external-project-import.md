@@ -85,12 +85,13 @@ or another included observation changes.
 
 | Boundary | Policy v1 behavior |
 | --- | --- |
-| Repository type | Ordinary local SHA-1 Git worktree with compatible index and local objects. Bare and linked worktrees, network paths, redirected metadata, alternate object stores and partial clones are unsupported. |
+| Repository type | Ordinary local SHA-1 Git worktree with a compatible index and independent local objects. Bare, linked and sparse worktrees, network paths, redirected metadata, shared or alternate object storage and partial clones are unsupported. |
 | Inventory | At most 2,048 tracked paths and 8,192 worktree entries. The index is limited to 8 MiB and Git object storage to 65,536 entries and 512 MiB. Git has an eight-second command timeout and a 2 MiB output bound. A bound or unsafe Git layout can reject a scan. |
 | File content | At most 64 KiB per eligible file and 8 MiB total content read. Large and binary files supply metadata. Unverifiable tracked state blocks import. |
 | Tracked changes | Staged or tracked worktree changes require explicit `DIRTY_TRACKED` confirmation. Discovery compares raw bytes without running Git filters, which can report differences in a line-ending-normalized checkout. |
 | Untracked files | Counts and inventory digest only, including ignored paths. Their contents are excluded from the scan and Context. |
 | Links and children | The scan avoids symlink and reparse traversal and records Git submodules as metadata. Nested repositories are identified without traversal. |
+| Private storage | Any top-level `.corinthos` entry in the index or HEAD prevents import, even when the working-tree copy is absent. |
 | Sensitive files | Recognized sensitive paths are excluded from content reads and their path identities are suppressed in the public observation. Excerpts are redacted before truncation. |
 | Manifests | Static parsing extracts allowlisted names and limited declarations from `package.json`, `pyproject.toml`, `Cargo.toml`, simple `requirements*.txt` and `go.mod`. Additional recognized manifests can appear as metadata. Script names are observations. |
 
@@ -108,6 +109,13 @@ snapshot in `.corinthos/snapshots/`. Snapshot files are addressed by digest.
 Lifecycle records hold the import or refresh summary and snapshot reference.
 The Project Registry records successful imports and Project State presents the
 bounded import summary. Import publishes no contracts or provider instructions.
+
+On Windows and Linux, import prepares the intent in temporary storage outside
+the repository on the same filesystem, then atomically publishes the private
+directory without replacing existing state. An interruption after this point
+leaves a recoverable intent. Git editors remain free to change the worktree,
+including after the final scan. The snapshot records what the bounded final
+scan observed. An explicit refresh can capture later changes.
 
 | Status or error | What to do |
 | --- | --- |

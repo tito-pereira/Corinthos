@@ -210,7 +210,7 @@ class ExternalProjectImportService:
             project_id = intent["project_id"]
             if not os.path.lexists(private_directory(root) / "state.db"):
                 return _view(root, "INCOMPLETE", project_id)
-            with ContractStore.read_snapshot(root) as (connection, version):
+            with ContractStore.inspect_snapshot(root) as (connection, version):
                 if version != 9:
                     return _view(root, "INVALID")
                 entry = storage.pointer(connection, project_id)
@@ -254,7 +254,7 @@ class ExternalProjectImportService:
             else _new_intent(root, discovery_digest, confirmations)
         )
         if intent is None:
-            return _view(root, "ALREADY_MANAGED")
+            return self.status(root)
         project_id = intent["project_id"]
         if (
             intent["discovery_digest"] != discovery_digest
@@ -264,14 +264,14 @@ class ExternalProjectImportService:
         initialize_private(root)
         store = ContractStore(root)
         lifecycle = LifecycleRepository(store)
-        _, current = scan(root)
-        if error := _reject(current, discovery_digest, confirmations):
-            return _view(root, "INCOMPLETE", project_id, error=error)
         with lifecycle.transaction() as connection:
             entry = storage.pointer(connection, project_id, initial=True)
             if entry is None:
                 if connection.execute("SELECT 1 FROM lc_projects LIMIT 1").fetchone():
                     raise IntegrityError("Unexpected lifecycle state in the incomplete import.")
+                _, current = scan(root)
+                if error := _reject(current, discovery_digest, confirmations):
+                    return _view(root, "INCOMPLETE", project_id, error=error)
                 entry = _save_snapshot(root, project_id, current, confirmations)
                 lifecycle.project(
                     project_id, create=True, connection=connection, actor_id="local-operator"
@@ -297,14 +297,14 @@ class ExternalProjectImportService:
         if status["status"] != "IMPORTED":
             return status
         project_id = status["project_id"]
-        _, observation = scan(root)
-        if error := _reject(observation, discovery_digest, confirmations):
-            return _view(root, "REJECTED", project_id, error=error)
         lifecycle = LifecycleRepository(ContractStore(root))
         with lifecycle.transaction() as connection:
             current = storage.pointer(connection, project_id)
             if current["snapshot_digest"] != expected_snapshot_digest:
                 return _view(root, "REJECTED", project_id, error="SNAPSHOT_CHANGED")
+            _, observation = scan(root)
+            if error := _reject(observation, discovery_digest, confirmations):
+                return _view(root, "REJECTED", project_id, error=error)
             previous = storage.read_snapshot(root, project_id, current)
             if (
                 current["discovery_digest"] == discovery_digest
@@ -334,7 +334,7 @@ class ExternalProjectImportService:
             storage.require_digest(snapshot_digest)
         if status["status"] != "IMPORTED":
             return status, []
-        with ContractStore.read_snapshot(root) as (connection, _):
+        with ContractStore.inspect_snapshot(root) as (connection, _):
             entry = storage.pointer(
                 connection, status["project_id"], snapshot_digest=snapshot_digest
             )
