@@ -212,6 +212,18 @@ jobs:
       - name: Fetch the verified Phase 8 installer baseline
         shell: pwsh
         run: git fetch --no-tags origin 4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23
+      - name: Verify the hosted runner's Windows build prerequisites
+        shell: powershell
+        run: |
+          . .\platform\windows\common.ps1
+          . .\platform\windows\toolchain.ps1
+          $msvc = Find-CorinthosMsvc
+          $sdk = Get-WindowsSdkBuild
+          $webview = Get-CorinthosWebView2
+          if (!$msvc -or !$sdk -or !$webview) {
+            throw "Hosted runner prerequisite missing (MSVC: $([bool]$msvc), SDK: $([bool]$sdk), WebView2: $([bool]$webview))."
+          }
+          Write-Host "MSVC $($msvc.Version), Windows SDK $($sdk.Version), WebView2 $webview"
       - name: Build, exercise, reinstall and uninstall the installed product
         shell: powershell
         env:

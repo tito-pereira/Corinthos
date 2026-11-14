@@ -11,6 +11,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:RUNNER_ENVIRON
 }
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot 'distribution.ps1')
+. (Join-Path $PSScriptRoot 'release.ps1')
 . (Join-Path $PSScriptRoot 'test-installed-desktop.ps1')
 
 function Assert-Smoke([bool] $Condition, [string] $Message) {
