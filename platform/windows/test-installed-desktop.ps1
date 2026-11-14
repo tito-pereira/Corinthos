@@ -30,21 +30,33 @@ function Click-ProductButton([string] $Name) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Button) -Enabled
     } "an enabled $Name button"
-    $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $invoke = $null
+    Assert-Smoke ($control.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) "Installed button '$Name' has no invoke pattern."
+    $invoke.Invoke()
 }
 
 function Set-ProductText([string] $Name, [string] $Text) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Edit) -Enabled
     } "an enabled $Name field"
-    $control.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Text)
+    $value = $null
+    if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $value)) {
+        $value.SetValue($Text)
+    } else {
+        # Chromium can expose multiline edits through TextPattern only.
+        Assert-Smoke ($Text -cmatch '^[A-Za-z0-9 .,-]+$') "Installed field '$Name' needs plain fixture text for keyboard input."
+        $control.SetFocus()
+        Assert-Smoke ($control.Current.HasKeyboardFocus) "Could not focus the installed field '$Name'."
+        [System.Windows.Forms.SendKeys]::SendWait('^a' + $Text)
+    }
 }
 
 function Select-ProductCodex([string] $Name) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::ComboBox) -Enabled
     } "the $Name selector"
-    $expand = $control.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand = $null
+    Assert-Smoke ($control.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $expand)) "Installed selector '$Name' has no expand pattern."
     $expand.Expand()
     $option = Wait-ProductObservation {
         $condition = [System.Windows.Automation.PropertyCondition]::new(
@@ -65,7 +77,14 @@ function Select-ProductCodex([string] $Name) {
             $expand.Collapse()
         }
     } else {
-        $option.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $invoke = $null
+        if ($option.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
+            $invoke.Invoke()
+        } else {
+            $control.SetFocus()
+            Assert-Smoke ($control.Current.HasKeyboardFocus) "Could not focus the installed selector '$Name'."
+            [System.Windows.Forms.SendKeys]::SendWait('{HOME}c{ENTER}')
+        }
     }
 }
 
@@ -111,7 +130,7 @@ function Close-ProductDesktop([string[]] $ChildExecutables) {
 }
 
 function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython, [string] $Project, [string] $Provider, [string] $ProviderLog) {
-    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
     $script:ProductDesktopId = 0
     $providerBefore = if ([IO.File]::Exists($ProviderLog)) { [IO.File]::ReadAllLines($ProviderLog).Length } else { 0 }
     $objective = 'Create the installed desktop fixture'
