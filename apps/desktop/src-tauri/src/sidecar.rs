@@ -20,6 +20,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const PROJECT_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const SWITCH_EXECUTE_TIMEOUT: Duration = Duration::from_secs(20);
+const IMPORT_INSPECT_TIMEOUT: Duration = Duration::from_secs(45);
+const IMPORT_WRITE_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PROTOCOL_VERSION: u32 = 2;
@@ -214,6 +216,8 @@ impl Sidecar {
         let timeout = match method {
             "project.open" => PROJECT_OPEN_TIMEOUT,
             "switch.execute" => SWITCH_EXECUTE_TIMEOUT,
+            "import.inspect" => IMPORT_INSPECT_TIMEOUT,
+            "import.commit" | "import.refresh" => IMPORT_WRITE_TIMEOUT,
             _ => REQUEST_TIMEOUT,
         };
         self.receive_response(id, Instant::now() + timeout)

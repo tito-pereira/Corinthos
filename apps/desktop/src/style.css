@@ -149,3 +149,8 @@ code {
 .adaptive-workflow .field-row { align-items: end; margin: 0.55rem 0; }
 .adaptive-workflow h5 { margin: 0.55rem 0 0.35rem; font-size: 1rem; }
 .adaptive-workflow ul { margin: 0.35rem 0; }
+
+.repository-import { margin-top: 1rem; border-top: 1px solid #d4ded7; padding-top: 0.75rem; }
+.repository-import h3, .import-preview h4 { margin: 0.65rem 0 0.35rem; }
+.import-preview dd, .import-preview li, .import-confirmed code { overflow-wrap: anywhere; }
+.import-preview ul { margin: 0.35rem 0; }

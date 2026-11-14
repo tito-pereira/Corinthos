@@ -12,7 +12,7 @@ Product requirements revision v0.2 targets Core v0.1.
 
 ## Current Python baseline
 
-Package metadata declares Python `>=3.12`. CI covers CPython 3.12 and 3.14.10
+Package metadata declares Python `>=3.12`. CI covers CPython 3.12, 3.14.10 and 3.15
 on Windows and Ubuntu. Historical post-merge
 [CI run 43100767021](https://github.com/tito-pereira/Corinthos/actions/runs/43100767021)
 at commit `b35fc74b96c3dc86d898c01f7fbe3cd6e0582169` exercised CPython 3.12.10

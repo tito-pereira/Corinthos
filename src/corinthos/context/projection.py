@@ -122,6 +122,8 @@ def _select(project_id, work_item_id, provider, candidates, required_handoff_id=
             project_id, work_item_id, provider, [*chosen, source], required_handoff_id
         )
         if len(canonical_bytes(payload)) > MAX_PROJECTION_BYTES:
+            if source.reason.startswith("IMPORT_"):
+                continue
             break
         seen.add(identity)
         chosen.append(source)
@@ -139,6 +141,7 @@ class ContextService:
         self.repository = ContextRepository(root)
 
     def create(self, work_item_id, provider, *, required_handoff_id=None):
+        from corinthos.external_import.context_sources import capture_for_work, verify_capture_head
         from corinthos.providers import SUPPORTED_PROVIDERS
 
         identifier(work_item_id, "Work Item")
@@ -146,6 +149,7 @@ class ContextService:
             raise ContextError("Select a supported target provider.")
         if required_handoff_id is not None:
             identifier(required_handoff_id, "Session Handoff")
+        imported = capture_for_work(self.repository, work_item_id, provider, required_handoff_id)
         with self.repository.write() as connection:
             index = ContextIndex(connection, self.repository)
             if required_handoff_id is None:
@@ -166,7 +170,10 @@ class ContextService:
                     raise ContextError("The required Session Handoff belongs to another project.")
             if sanitize_text(exact_work_id) != exact_work_id:
                 raise ContextError("The Work Item identity is not admissible as Context.")
-            chosen = _select(project_id, exact_work_id, provider, candidates, required_handoff_id)
+            fallback = verify_capture_head(connection, project_id, exact_work_id, imported)
+            chosen = _select(
+                project_id, exact_work_id, provider, [*candidates, *fallback], required_handoff_id
+            )
             if required_handoff_id is not None and (
                 len(chosen) < 2 or chosen[1].identity != required_handoff_id
             ):

@@ -1,6 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.corinthos.local/rpc/v2/request.schema.json",
+  "$defs": {
+    "importRoot": { "$ref": "import-common.schema.json#/$defs/root" },
+    "importDigest": { "$ref": "import-common.schema.json#/$defs/digest" },
+    "importLimit": { "$ref": "import-common.schema.json#/$defs/limit" },
+    "importOffset": { "$ref": "import-common.schema.json#/$defs/offset" },
+    "importConfirmations": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "import-common.schema.json#/$defs/code" }
+    }
+  },
   "allOf": [
     {
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
@@ -1514,6 +1526,94 @@
         "required": [
           "params"
         ]
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "import.inspect" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "$ref": "#/$defs/importRoot" },
+              "limit": { "$ref": "#/$defs/importLimit" },
+              "offset": { "$ref": "#/$defs/importOffset" }
+            },
+            "required": ["root"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["params"]
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "import.status" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": { "root": { "$ref": "#/$defs/importRoot" } },
+            "required": ["root"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["params"]
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "import.commit" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "$ref": "#/$defs/importRoot" },
+              "discovery_digest": { "$ref": "#/$defs/importDigest" },
+              "confirmations": { "$ref": "#/$defs/importConfirmations" }
+            },
+            "required": ["root", "discovery_digest"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["params", "id"]
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "import.refresh" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "$ref": "#/$defs/importRoot" },
+              "discovery_digest": { "$ref": "#/$defs/importDigest" },
+              "expected_snapshot_digest": { "$ref": "#/$defs/importDigest" },
+              "confirmations": { "$ref": "#/$defs/importConfirmations" }
+            },
+            "required": ["root", "discovery_digest", "expected_snapshot_digest"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["params", "id"]
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "import.files" } } },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "$ref": "#/$defs/importRoot" },
+              "snapshot_digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
+              "limit": { "$ref": "#/$defs/importLimit" },
+              "offset": { "$ref": "#/$defs/importOffset" }
+            },
+            "required": ["root"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["params"]
       }
     }
   ]

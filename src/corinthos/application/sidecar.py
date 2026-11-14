@@ -9,6 +9,7 @@ from typing import BinaryIO, TextIO
 from corinthos.application import (
     adaptive,
     context,
+    external_import,
     project_status,
     providers_status,
     version,
@@ -86,6 +87,19 @@ _V2_OPERATIONS = {
     "flow.status": (adaptive.flow_status, ("root", "work_item_id"), ()),
     "flow.complete": (adaptive.flow_complete, ("root", "work_item_id", "expected_updated_at"), ()),
     "work.report": (adaptive.work_report, ("root", "work_item_id"), ()),
+    "import.inspect": (external_import.import_inspect, ("root",), _PAGE_OPTIONS),
+    "import.commit": (
+        external_import.import_commit,
+        ("root", "discovery_digest"),
+        ("confirmations",),
+    ),
+    "import.status": (external_import.import_status, ("root",), ()),
+    "import.refresh": (
+        external_import.import_refresh,
+        ("root", "expected_snapshot_digest", "discovery_digest"),
+        ("confirmations",),
+    ),
+    "import.files": (external_import.import_files, ("root",), ("snapshot_digest", *_PAGE_OPTIONS)),
 }
 _SESSION_OPERATIONS = {
     "session.start": (
@@ -128,6 +142,8 @@ _MUTATIONS = {
     "scope.set",
     "flow.start",
     "flow.complete",
+    "import.commit",
+    "import.refresh",
 }
 _ERROR_MESSAGES = {
     -32700: "Parse error",

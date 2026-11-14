@@ -179,7 +179,7 @@ class WorkService:
             if project_id is not None and project_id != parent_project:
                 raise WorkError("The parent Work Item belongs to another project.")
             return parent_project
-        contracts, work = repository.project_ids(7)
+        contracts, work = repository.project_ids(ContractStore.current_schema_version())
         known = set(contracts) | set(work)
         if project_id is not None:
             if project_id not in known:

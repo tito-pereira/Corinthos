@@ -41,6 +41,18 @@ jobs:
             base: python
             python: ./.venv/Scripts/python.exe
             cli: ./.venv/Scripts/corinthos.exe
+          - os: ubuntu-latest
+            version: '3.15'
+            shell: bash
+            base: python3.15
+            python: ./.venv/bin/python
+            cli: ./.venv/bin/corinthos
+          - os: windows-latest
+            version: '3.15'
+            shell: pwsh
+            base: python
+            python: ./.venv/Scripts/python.exe
+            cli: ./.venv/Scripts/corinthos.exe
     steps:
       - uses: actions/checkout@v7
         with:
@@ -51,7 +63,9 @@ jobs:
         with:
           python-version: ${{ matrix.version }}
       - name: Record tested commit
-        run: git rev-parse HEAD
+        run: |
+          git rev-parse HEAD
+          git --version
       - name: Create clean virtual environment
         run: ${{ matrix.base }} -m venv .venv
       - name: Verify virtual environment and Python version
@@ -124,6 +138,13 @@ jobs:
           ${{ matrix.python }} -m corinthos scope assess --help
           ${{ matrix.python }} -m corinthos flow status --help
           ${{ matrix.python }} -m corinthos work report --help
+      - name: Verify Phase 7 CLI commands
+        run: |
+          ${{ matrix.python }} -m corinthos import inspect --help
+          ${{ matrix.python }} -m corinthos import commit --help
+          ${{ matrix.python }} -m corinthos import status --help
+          ${{ matrix.python }} -m corinthos import refresh --help
+          ${{ matrix.python }} -m corinthos import files --help
       - name: Verify Workflow commands
         run: |
           ${{ matrix.python }} -m corinthos workflow --help

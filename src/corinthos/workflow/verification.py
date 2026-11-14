@@ -9,9 +9,10 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 from time import monotonic
 
+from corinthos._paths import windows_component_is_reserved
 from corinthos.adapters.process_control import start_process
 from corinthos.contracts import ContractRef, IntegrityError, validate_schema
 from corinthos.contracts.artifacts import is_link, private_directory
@@ -196,7 +197,7 @@ def relative_path(value, *, directory=False):
         or path.as_posix() != value
         or any(
             item in {".", ".."}
-            or PureWindowsPath(item).is_reserved()
+            or windows_component_is_reserved(item)
             or item.endswith((".", " "))
             or any(ord(char) < 32 for char in item)
             for item in path.parts
