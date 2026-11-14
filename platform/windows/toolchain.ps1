@@ -473,8 +473,12 @@ function New-CorinthosBuildEnvironment($Tools, $Prerequisites, [string] $Work, [
     )
     return @{
         PATH = $pathList -join ';'; SystemRoot = $windows; windir = $windows; ComSpec = Join-Path $sys 'cmd.exe'
-        PATHEXT = '.COM;.EXE;.BAT;.CMD'; TEMP = $temp; TMP = $temp; HOME = $homePath; USERPROFILE = $homePath
-        LOCALAPPDATA = $homePath; APPDATA = $homePath; PROGRAMDATA = [Environment]::GetFolderPath('CommonApplicationData')
+        PATHEXT = '.COM;.EXE;.BAT;.CMD'; TEMP = $temp; TMP = $temp; HOME = $homePath
+        # Windows HTTP creates compatibility junctions when USERPROFILE points at the build stage.
+        USERPROFILE = [Environment]::GetFolderPath('UserProfile')
+        LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+        APPDATA = [Environment]::GetFolderPath('ApplicationData')
+        PROGRAMDATA = [Environment]::GetFolderPath('CommonApplicationData')
         PROCESSOR_ARCHITECTURE = 'AMD64'
         NUMBER_OF_PROCESSORS = [string][Environment]::ProcessorCount
         INCLUDE = @($msvc.Include, (Join-Path $sdk.Include 'ucrt'), (Join-Path $sdk.Include 'shared'), (Join-Path $sdk.Include 'um'), (Join-Path $sdk.Include 'winrt')) -join ';'

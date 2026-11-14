@@ -221,6 +221,7 @@ $env:LOCALAPPDATA = Join-Path $sandbox 'local'
 $systemPath = "$env:SystemRoot\System32;$gitDirectory"
 $env:PATH = $systemPath
 $pathFixture = '%SystemRoot%\System32;C:\corinthos-smoke-unrelated'
+$smokeComplete = $false
 try {
     $paths = Get-CorinthosPaths
     [void] [IO.Directory]::CreateDirectory($other)
@@ -481,6 +482,7 @@ if __name__ == '__main__':
             }
         })
     }
+    $smokeComplete = $true
     Write-Host 'Fresh install, PATH, no-system-Python command, project isolation, cache, rollback and uninstall smoke passed.'
 } finally {
     try { Restore-UserPath $key $originalUserPath; Send-UserPathChange }
@@ -489,12 +491,17 @@ if __name__ == '__main__':
         $env:LOCALAPPDATA = $originalLocal
         $env:PATH = $originalProcessPath
         Set-Location -LiteralPath $originalLocation.Path
-        if ([IO.Directory]::Exists($sandbox)) {
-            Assert-PlainPath $sandbox
-            Assert-Smoke ([IO.Path]::GetDirectoryName($sandbox) -ceq $runnerTemp -and
-                [IO.Path]::GetFileName($sandbox) -cmatch '^corinthos-install-[a-f0-9]{32}$') 'Refusing cleanup outside the exact runner fixture.'
-            [void] (Get-SetupInventory $sandbox)
-            Remove-Item -LiteralPath $sandbox -Recurse -Force
+        try {
+            if ([IO.Directory]::Exists($sandbox)) {
+                Assert-PlainPath $sandbox
+                Assert-Smoke ([IO.Path]::GetDirectoryName($sandbox) -ceq $runnerTemp -and
+                    [IO.Path]::GetFileName($sandbox) -cmatch '^corinthos-install-[a-f0-9]{32}$') 'Refusing cleanup outside the exact runner fixture.'
+                [void] (Get-SetupInventory $sandbox)
+                Remove-Item -LiteralPath $sandbox -Recurse -Force
+            }
+        } catch {
+            if ($smokeComplete) { throw }
+            Write-Warning 'The disposable runner fixture could not be cleaned after the test failed.'
         }
     }
 }

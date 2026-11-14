@@ -97,6 +97,7 @@ function Open-ProductDesktop([string] $Desktop, [string] $PrivatePython) {
     $sidecar = @(Find-ProductProcesses @($PrivatePython))
     Assert-Smoke ($sidecar.Count -eq 1 -and $sidecar[0].ParentProcessId -eq $script:ProductDesktopId) 'Desktop did not own exactly one adjacent private Python sidecar.'
     $null = Wait-ProductObservation { Find-ProductControl 'Recent projects' } 'Home'
+    Write-Host 'Installed desktop Home and its adjacent private backend are visible.'
     return $startup.ElapsedMilliseconds
 }
 
@@ -122,6 +123,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         Click-ProductButton 'Command'
         $null = Wait-ProductObservation { Find-ProductControl 'Refresh Command' } 'Command'
         $null = Wait-ProductObservation { Find-ProductControl $projectName } 'the project previously recorded by CLI'
+        Write-Host 'Installed Command observed a CLI project.'
         Assert-Smoke (![IO.File]::Exists($ProviderLog) -or [IO.File]::ReadAllLines($ProviderLog).Length -eq $providerBefore) 'Installed Home or Command executed a provider.'
         $sidecar = @(Find-ProductProcesses @($PrivatePython))
         Assert-Smoke ($sidecar.Count -eq 1) 'Expected one sidecar before the reconnect test.'
@@ -132,6 +134,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $replacement = @(Find-ProductProcesses @($PrivatePython))
         Assert-Smoke ($replacement.Count -eq 1 -and $replacement[0].ProcessId -ne $sidecar[0].ProcessId -and
             $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
+        Write-Host 'Installed desktop replaced the stopped sidecar.'
         Click-ProductButton 'Projects'
         Set-ProductText 'Project root' $Project
         Click-ProductButton 'Open project'
@@ -145,6 +148,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         Set-ProductText 'Absolute executable path' $Provider
         Click-ProductButton 'Save provider'
         $null = Wait-ProductObservation { Find-ProductControl 'Provider selection saved.' } 'confirmation of the explicit provider setting'
+        Write-Host 'Installed Settings saved the explicit provider choice.'
         $adapter = (& corinthos adapters show --root $Project --provider codex) -join [Environment]::NewLine
         Assert-Smoke ($LASTEXITCODE -eq 0 -and $adapter.Contains($Provider)) 'CLI did not observe the provider setting saved in the GUI.'
         $settingsDirectory = [IO.Path]::GetDirectoryName($Provider)
