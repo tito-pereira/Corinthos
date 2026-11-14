@@ -31,8 +31,18 @@ function Click-ProductButton([string] $Name) {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Button) -Enabled
     } "an enabled $Name button"
     $invoke = $null
-    Assert-Smoke ($control.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) "Installed button '$Name' has no invoke pattern."
-    $invoke.Invoke()
+    if ($control.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
+        $invoke.Invoke()
+        return
+    }
+    $toggle = $null
+    if ($control.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref] $toggle)) {
+        $toggle.Toggle()
+        return
+    }
+    $control.SetFocus()
+    Assert-Smoke ($control.Current.HasKeyboardFocus) "Could not focus the installed button '$Name'."
+    [System.Windows.Forms.SendKeys]::SendWait(' ')
 }
 
 function Set-ProductText([string] $Name, [string] $Text) {
