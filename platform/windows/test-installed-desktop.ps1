@@ -110,6 +110,15 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $null = Wait-ProductObservation { Find-ProductControl 'Refresh Command' } 'Command'
         $null = Wait-ProductObservation { Find-ProductControl $projectName } 'the project previously recorded by CLI'
         Assert-Smoke (![IO.File]::Exists($ProviderLog) -or [IO.File]::ReadAllLines($ProviderLog).Length -eq $providerBefore) 'Installed Home or Command executed a provider.'
+        $sidecar = @(Find-ProductProcesses @($PrivatePython))
+        Assert-Smoke ($sidecar.Count -eq 1) 'Expected one sidecar before the reconnect test.'
+        Stop-Process -Id $sidecar[0].ProcessId
+        $null = Wait-ProductObservation { Find-ProductControl 'Disconnected' } 'a disconnected state after sidecar exit'
+        Click-ProductButton 'Reconnect'
+        $null = Wait-ProductObservation { Find-ProductControl 'Connected' } 'a new private backend handshake'
+        $replacement = @(Find-ProductProcesses @($PrivatePython))
+        Assert-Smoke ($replacement.Count -eq 1 -and $replacement[0].ProcessId -ne $sidecar[0].ProcessId -and
+            $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
         Click-ProductButton 'Projects'
         Set-ProductText 'Project root' $Project
         Click-ProductButton 'Open project'
@@ -125,6 +134,19 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $null = Wait-ProductObservation { Find-ProductControl 'Provider selection saved.' } 'confirmation of the explicit provider setting'
         $adapter = (& corinthos adapters show --root $Project --provider codex) -join [Environment]::NewLine
         Assert-Smoke ($LASTEXITCODE -eq 0 -and $adapter.Contains($Provider)) 'CLI did not observe the provider setting saved in the GUI.'
+        $settingsDirectory = [IO.Path]::GetDirectoryName($Provider)
+        $redirectedDirectory = Join-Path ([IO.Path]::GetDirectoryName($settingsDirectory)) 'redirected provider'
+        try {
+            $null = New-Item -ItemType Junction -Path $redirectedDirectory -Target $settingsDirectory
+            $beforeRedirect = (Get-FileHash -LiteralPath $ProviderLog).Hash
+            $null = & {
+                $ErrorActionPreference = 'Continue'
+                corinthos adapters configure codex --root $Project --executable (Join-Path $redirectedDirectory 'codex.exe') 2>&1
+            }
+            Assert-Smoke ($LASTEXITCODE -ne 0 -and (Get-FileHash -LiteralPath $ProviderLog).Hash -eq $beforeRedirect) 'Installed CLI accepted or launched a redirected provider executable.'
+        } finally {
+            if ([IO.Directory]::Exists($redirectedDirectory)) { [IO.Directory]::Delete($redirectedDirectory) }
+        }
         Click-ProductButton 'Projects'
         Click-ProductButton 'Work'
         Set-ProductText 'Objective' $objective
@@ -160,6 +182,9 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
             if ($LASTEXITCODE -eq 0 -and $transcript.Contains('Fixture provider claimed VERIFIED.')) { $transcript }
         } 'the fixture provider observation'
         Assert-Smoke (!$events.Contains('installed-fixture-hidden-value')) 'Installed Session event leaked the fixture secret.'
+        $verifyFlow = (& corinthos flow status --work $work[0].work_item_id --root $Project) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $verifyFlow.latest_session.session_id -ceq $session.session_id -and
+            $verifyFlow.validation_state -ceq 'NOT_VERIFIED' -and !$verifyFlow.can_complete) 'Provider text manufactured independent Validation.'
         Click-ProductButton 'Refresh workflow'
         $null = Wait-ProductObservation { Find-ProductControl $session.session_id } 'the exact active Session'
         $null = Wait-ProductObservation { Find-ProductControl 'NOT_VERIFIED' } 'the independent Validation state'

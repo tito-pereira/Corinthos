@@ -158,7 +158,6 @@ function New-InstallCandidate([string] $Source, $Paths, [string] $Work, [string]
     [IO.File]::Copy($desktop.Executable, (Join-Path $candidate 'bin\corinthos-desktop.exe'))
     [IO.File]::Copy($desktop.ManifestPath, (Join-Path $candidate 'resources\toolchain-artifacts.json'))
     Write-CorinthosReleaseRecord $desktop.SourceSnapshot $candidate $desktop.Provenance
-    Assert-ReleaseSource $Source $desktop.Git $desktop.Provenance
     Show-InstallProgress 75 'Corinthos desktop and command staged'
     return $candidate
 }

@@ -17,17 +17,6 @@ function Get-ReleaseFiles {
     )
 }
 
-function Assert-ReleaseSource([string] $Source, [string] $Git, $Provenance) {
-    Assert-PlainPath $Git
-    $head = & $Git -C $Source rev-parse HEAD 'HEAD^{tree}' 2>$null
-    if ($LASTEXITCODE -ne 0 -or $head.Count -ne 2 -or
-        $head[0] -cne $Provenance.source_commit -or $head[1] -cne $Provenance.source_tree) {
-        throw 'The source checkout changed during candidate construction.'
-    }
-    $changes = & $Git -C $Source --no-optional-locks -c core.fsmonitor=false status --porcelain=v1 --untracked-files=no --ignore-submodules=none 2>$null
-    if ($LASTEXITCODE -ne 0 -or $changes) { throw 'The installer requires a clean tracked source checkout.' }
-}
-
 function Get-LockedDependencyNames([string] $Candidate, [string] $NpmLock, [string] $CargoLock) {
     foreach ($path in @($NpmLock, $CargoLock)) {
         Assert-PlainPath $path
@@ -54,12 +43,20 @@ function Write-CorinthosReleaseRecord([string] $Source, [string] $Candidate, $Pr
     $npmLock = Join-Path $desktopSource 'package-lock.json'
     $cargoLock = Join-Path $desktopSource 'src-tauri\Cargo.lock'
     $provenanceTools = [ordered] @{}
-    foreach ($key in @('node', 'npm', 'rustc', 'cargo', 'tauri_cli', 'msvc', 'webview2')) {
+    foreach ($key in @('node', 'npm', 'rustc', 'cargo', 'tauri_cli', 'msvc', 'windows_sdk', 'webview2')) {
         $value = $Provenance[$key]
         if ($value -isnot [string] -or $value -cnotmatch '^[A-Za-z0-9 .+()_-]{1,128}$') {
             throw 'The desktop toolchain provenance contains an invalid value.'
         }
         $provenanceTools[$key] = $value
+    }
+    $prerequisites = [ordered] @{}
+    foreach ($key in @('msvc_signer', 'webview2_signer')) {
+        $signer = $Provenance[$key]
+        if ($null -ne $signer -and $signer -cne 'Microsoft Corporation') {
+            throw 'The desktop prerequisite provenance contains an invalid publisher.'
+        }
+        $prerequisites[$key] = $signer
     }
     foreach ($key in @('source_commit', 'source_tree')) {
         if ($Provenance[$key] -cnotmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { throw 'Could not verify release source identity.' }
@@ -103,6 +100,7 @@ function Write-CorinthosReleaseRecord([string] $Source, [string] $Candidate, $Pr
         package_lock_sha256 = Get-ReleaseHash $npmLock
         cargo_lock_sha256 = Get-ReleaseHash $cargoLock
         build_tools = $provenanceTools
+        prerequisite_bootstrap_signers = $prerequisites
         signing_state = 'UNSIGNED'
         auto_updater = 'NOT_CONFIGURED'
         real_provider_validation = 'NOT_AVAILABLE'

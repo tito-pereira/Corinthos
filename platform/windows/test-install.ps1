@@ -262,8 +262,6 @@ try {
     Assert-Smoke ((Get-Command corinthos).Source -eq (Join-Path $paths.Bin 'corinthos.exe')) 'Command did not resolve through the persisted user PATH.'
     $version = & $powerShell -NoProfile -NonInteractive -Command 'corinthos --version; exit $LASTEXITCODE'
     Assert-Smoke ($LASTEXITCODE -eq 0 -and $version -like 'corinthos *') 'Installed command failed after the checkout moved.'
-    $homeOutput = '0' | & corinthos .
-    Assert-Smoke ($LASTEXITCODE -eq 0 -and 'CORINTHOS' -in $homeOutput) 'The command did not forward stdin and stdout to Home.'
     $desktop = Join-Path $paths.Bin 'corinthos-desktop.exe'
     $privatePython = Join-Path $paths.Install 'runtime\python.exe'
     Assert-Smoke ((& corinthos --version) -ceq $version -and !(Find-ProductProcesses @($desktop))) 'CLI arguments unexpectedly started the desktop.'
@@ -281,8 +279,9 @@ try {
         Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists((Join-Path $root '.corinthos\bootstrap.json'))) 'One installed command failed to initialize an independent project.'
         Assert-Smoke (![IO.Directory]::Exists((Join-Path $root '.venv'))) 'Project initialization created a private project venv.'
         Set-Location -LiteralPath $root
-        $null = @('0', '0') | & corinthos .
-        Assert-Smoke ($LASTEXITCODE -eq 0) 'Installed command failed to open an existing project.'
+        $terminalCommand = @('0', '0') | & corinthos .
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and 'PROJECT' -in $terminalCommand -and
+            'CORINTHOS' -in $terminalCommand) 'Installed command did not pass terminal input/output or open an existing project.'
     }
     Set-Location -LiteralPath $other
     $recent = Join-Path $paths.State 'recent-projects.json'
@@ -472,6 +471,12 @@ if __name__ == '__main__':
         $env:LOCALAPPDATA = $originalLocal
         $env:PATH = $originalProcessPath
         Set-Location -LiteralPath $originalLocation.Path
-        Remove-SetupTree $sandbox $runnerTemp
+        if ([IO.Directory]::Exists($sandbox)) {
+            Assert-PlainPath $sandbox
+            Assert-Smoke ([IO.Path]::GetDirectoryName($sandbox) -ceq $runnerTemp -and
+                [IO.Path]::GetFileName($sandbox) -cmatch '^corinthos-install-[a-f0-9]{32}$') 'Refusing cleanup outside the exact runner fixture.'
+            [void] (Get-SetupInventory $sandbox)
+            Remove-Item -LiteralPath $sandbox -Recurse -Force
+        }
     }
 }

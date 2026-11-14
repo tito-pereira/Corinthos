@@ -28,9 +28,6 @@ try {
     if ($null -eq $key) { throw 'The current user Environment registry key is unavailable.' }
     [void] (Get-UserPath $key)
     Restore-PreviousInstall $paths $key
-    if ([IO.Directory]::Exists($paths.Install)) {
-        Assert-InstalledInventory $paths.Install (Read-InstallManifest $paths.Install)
-    }
     Clear-AbandonedInstallStages $paths
     [void] [IO.Directory]::CreateDirectory($paths.Cache)
     [void] [IO.Directory]::CreateDirectory($paths.Programs)

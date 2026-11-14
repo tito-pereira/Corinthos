@@ -27,7 +27,27 @@ function Get-CorinthosSourceGit([string] $Source) {
     throw 'Git for Windows is required to verify and export the exact source checkout.'
 }
 
-function Read-CorinthosSourceIdentity([string] $Git, [string] $Source) {
+function Get-CorinthosLineEndingOptions([string] $Git, [string] $Source) {
+    $settings = [ordered]@{
+        'core.autocrlf' = '^(true|false|input)$'
+        'core.eol' = '^(lf|crlf|native)$'
+    }
+    foreach ($name in $settings.Keys) {
+        # Read only scalar settings that can affect clone line endings. Includes
+        # and repository commands must stay disabled in this preliminary query.
+        $args = @('-C', $Source, 'config', '--no-includes')
+        if ($name -eq 'core.autocrlf') { $args += '--type=bool-or-str' }
+        $value = @(& $Git @args --get $name 2>$null)
+        if ($LASTEXITCODE -eq 1 -and $value.Count -eq 0) { continue }
+        if ($LASTEXITCODE -ne 0 -or $value.Count -ne 1 -or $value[0] -notmatch $settings[$name]) {
+            throw 'The source checkout has an unsupported Git line-ending setting.'
+        }
+        '-c'
+        "$name=$($value[0].ToLowerInvariant())"
+    }
+}
+
+function Read-CorinthosSourceIdentity([string] $Git, [string] $Source, [string[]] $LineEndings = @()) {
     $root = Invoke-SetupNative $Git @('-C', $Source, 'rev-parse', '--show-toplevel') 'Git source root' -Quiet
     if (@($root).Count -ne 1 -or [IO.Path]::GetFullPath($root) -ne $Source) {
         throw 'Run the source installer from the root of its Git checkout.'
@@ -38,10 +58,11 @@ function Read-CorinthosSourceIdentity([string] $Git, [string] $Source) {
     if ($commit -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' -or $tree -cnotmatch "^[0-9a-f]{$($commit.Length)}$") {
         throw 'Git could not verify the exact Corinthos source identity.'
     }
-    $dirty = Invoke-SetupNative $Git @(
-        '-C', $Source, '-c', 'core.fsmonitor=false', '--no-optional-locks',
+    $dirty = Invoke-SetupNative $Git (@(
+        '-C', $Source, '-c', 'core.fsmonitor=false', '--no-optional-locks'
+    ) + $LineEndings + @(
         'status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=none'
-    ) 'Git source cleanliness' -Quiet
+    )) 'Git source cleanliness' -Quiet
     if (@($dirty).Count) { throw 'Commit or remove local checkout changes before installing Corinthos.' }
     $entries = Invoke-SetupNative $Git @('-C', $Source, 'ls-tree', '-r', $tree) 'Git source modes' -Quiet
     if (!@($entries).Count -or @($entries | Where-Object { $_ -notmatch '^100(644|755) blob ' }).Count) {
@@ -50,8 +71,7 @@ function Read-CorinthosSourceIdentity([string] $Git, [string] $Source) {
     return @{ Commit = $commit; Tree = $tree }
 }
 
-function Copy-CorinthosSourceSnapshot([string] $Source, [string] $Work) {
-    $git = Get-CorinthosSourceGit $Source
+function Invoke-CorinthosSourceRead([string] $Git, [string] $Source, [scriptblock] $Operation) {
     $environment = @{}
     foreach ($item in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
         if ($item.Key -ilike 'GIT_*') {
@@ -59,15 +79,28 @@ function Copy-CorinthosSourceSnapshot([string] $Source, [string] $Work) {
             [Environment]::SetEnvironmentVariable($item.Key, $null, 'Process')
         }
     }
-    $env:GIT_CONFIG_NOSYSTEM = '1'
-    $env:GIT_CONFIG_GLOBAL = 'NUL'
-    $env:GIT_NO_REPLACE_OBJECTS = '1'
-    $env:GIT_ALLOW_PROTOCOL = ''
-    $env:GIT_NO_LAZY_FETCH = '1'
-    $env:GIT_TERMINAL_PROMPT = '0'
-    $env:GIT_OPTIONAL_LOCKS = '0'
+    $guarded = @{
+        GIT_CONFIG_NOSYSTEM = '1'; GIT_CONFIG_GLOBAL = 'NUL'; GIT_NO_REPLACE_OBJECTS = '1'
+        GIT_ALLOW_PROTOCOL = ''; GIT_NO_LAZY_FETCH = '1'; GIT_TERMINAL_PROMPT = '0'
+        GIT_OPTIONAL_LOCKS = '0'
+    }
     try {
-        $identity = Read-CorinthosSourceIdentity $git $Source
+        $lineEndings = @(Get-CorinthosLineEndingOptions $Git $Source)
+        foreach ($name in $guarded.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $guarded[$name], 'Process')
+        }
+        & $Operation $lineEndings
+    } finally {
+        foreach ($name in $guarded.Keys) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
+        foreach ($name in $environment.Keys) { [Environment]::SetEnvironmentVariable($name, $environment[$name], 'Process') }
+    }
+}
+
+function Copy-CorinthosSourceSnapshot([string] $Source, [string] $Work) {
+    $git = Get-CorinthosSourceGit $Source
+    return Invoke-CorinthosSourceRead $git $Source {
+        param($lineEndings)
+        $identity = Read-CorinthosSourceIdentity $git $Source $lineEndings
         $archive = Join-Path $Work 'release-source.zip'
         Invoke-SetupNative $git @(
             '-C', $Source, 'archive', '--format=zip', "--output=$archive", $identity.Commit
@@ -78,16 +111,17 @@ function Copy-CorinthosSourceSnapshot([string] $Source, [string] $Work) {
         $snapshot = Join-Path $Work 'source'
         [IO.Compression.ZipFile]::ExtractToDirectory($archive, $snapshot)
         [void] (Get-SetupInventory $snapshot -ProtectProjects)
-        if ((Read-CorinthosSourceIdentity $git $Source).Commit -cne $identity.Commit) {
+        if ((Read-CorinthosSourceIdentity $git $Source $lineEndings).Commit -cne $identity.Commit) {
             throw 'The source checkout changed during export.'
         }
         return @{ Git = $git; Identity = $identity; Directory = $snapshot }
-    } finally {
-        foreach ($name in @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_NO_REPLACE_OBJECTS',
-                'GIT_ALLOW_PROTOCOL', 'GIT_NO_LAZY_FETCH', 'GIT_TERMINAL_PROMPT', 'GIT_OPTIONAL_LOCKS')) {
-            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
-        }
-        foreach ($name in $environment.Keys) { [Environment]::SetEnvironmentVariable($name, $environment[$name], 'Process') }
+    }
+}
+
+function Confirm-CorinthosSourceIdentity([string] $Git, [string] $Source) {
+    return Invoke-CorinthosSourceRead $Git $Source {
+        param($lineEndings)
+        Read-CorinthosSourceIdentity $Git $Source $lineEndings
     }
 }
 
@@ -533,7 +567,7 @@ function New-CorinthosDesktopBuild([string] $Source, $Paths, [string] $Work) {
     Invoke-CorinthosBuildNative $tools.Cargo @(
         'build', '--manifest-path', $cargoManifest, '--locked', '--release', '--target',
         $script:CorinthosDesktopTarget, '--no-default-features', '--features', 'desktop,custom-protocol'
-    ) $desktop $environment 'Locked desktop release build' 35
+    ) ([Environment]::SystemDirectory) $environment 'Locked desktop release build' 35
     $exe = Join-Path $environment.CARGO_TARGET_DIR "$script:CorinthosDesktopTarget\release\corinthos-desktop.exe"
     Assert-PlainPath $exe
     if (![IO.File]::Exists($exe)) { throw 'The expected production desktop executable is missing.' }
@@ -542,7 +576,7 @@ function New-CorinthosDesktopBuild([string] $Source, $Paths, [string] $Work) {
             throw 'A build lockfile changed during setup.'
         }
     }
-    $after = Read-CorinthosSourceIdentity $snapshot.Git $Source
+    $after = Confirm-CorinthosSourceIdentity $snapshot.Git $Source
     if ($after.Commit -cne $snapshot.Identity.Commit -or $after.Tree -cne $snapshot.Identity.Tree) {
         throw 'The source checkout changed during the desktop build.'
     }
