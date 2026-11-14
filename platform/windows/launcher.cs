@@ -20,7 +20,8 @@ internal static class Launcher
                 using (Process child = Process.Start(new ProcessStartInfo(desktop)
                 {
                     WorkingDirectory = directory,
-                    UseShellExecute = false
+                    // Desktop startup has its own lifetime even when the launcher is piped.
+                    UseShellExecute = true
                 }))
                 {
                     return 0;

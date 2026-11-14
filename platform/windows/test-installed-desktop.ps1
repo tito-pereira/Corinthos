@@ -77,8 +77,11 @@ function Find-ProductProcesses([string[]] $Executables) {
 
 function Open-ProductDesktop([string] $Desktop, [string] $PrivatePython) {
     $startup = [Diagnostics.Stopwatch]::StartNew()
-    $null = & corinthos
-    Assert-Smoke ($LASTEXITCODE -eq 0) 'The installed no-argument launcher did not open the desktop.'
+    $launcher = (Get-Command corinthos.exe -CommandType Application -ErrorAction Stop).Source
+    $parent = Start-Process -FilePath $launcher -PassThru
+    try {
+        Assert-Smoke ($parent.WaitForExit(10000) -and $parent.ExitCode -eq 0) 'The installed no-argument launcher did not open the desktop.'
+    } finally { $parent.Dispose() }
     $owner = Wait-ProductObservation { Find-ProductProcesses @($Desktop) } 'the installed desktop process'
     Assert-Smoke (@($owner).Count -eq 1) 'Expected one process for the installed desktop.'
     $script:ProductDesktopId = [int] $owner.ProcessId
