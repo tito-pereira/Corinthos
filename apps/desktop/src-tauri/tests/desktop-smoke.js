@@ -32,7 +32,7 @@
   const buttonNamed = (selector, label) => Array.from(document.querySelectorAll(selector)).find(
     (button) => text(button) === label,
   );
-  const view = (name) => buttonNamed(".project-views button", name);
+  const view = (name) => buttonNamed(".project-views button", name === "Work Items" ? "Work" : name);
   const sha256 = (value) => /^[a-f0-9]{64}$/.test(value ?? "");
   const revealsSecret = (selector) => (text(document.querySelector(selector)) ?? "").includes(
     "v8-fixture-hidden-value",
@@ -97,9 +97,12 @@
       const selected = text(project()?.querySelector("code"));
       return importedRow() && selected && normalizeWindowsPath(selected) === normalizeWindowsPath(projectRoot) &&
         valueFor(project(), "Initialized") === "Yes" && valueFor(project(), "Storage") === "Current · v9" &&
-        valueFor(project(), "Project Contract") === undefined && valueFor(project(), "Workflow") === undefined &&
-        document.querySelector("#work-objective")?.matches(":enabled");
+        valueFor(project(), "Project Contract") === undefined && valueFor(project(), "Workflow") === undefined;
     }))) return report("fail [import-project]");
+    if (!document.querySelector("#work-objective")) view("Work")?.click();
+    if (!(await waitFor(() => document.querySelector("#work-objective")?.matches(":enabled")))) {
+      return report("fail [import-project]");
+    }
     if (mode === "import-commit") return report("pass");
 
     const adaptive = () => document.querySelector(".adaptive-workflow");
@@ -162,6 +165,7 @@
       return path && normalizeWindowsPath(path) === normalizeWindowsPath(projectRoot);
     }))) return report("fail [adaptive-open-project]");
     if (valueFor(summary(), "Storage") !== "Current · v9") return report("fail [adaptive-storage]");
+    if (!document.querySelector("#work-objective")) view("Work")?.click();
     if (!(await waitFor(() => document.querySelector("#work-objective")?.matches(":enabled")))) {
       return report("fail [adaptive-work-view]");
     }
@@ -233,6 +237,170 @@
     return report("pass");
   }
 
+  async function verifyCommand() {
+    const sibling = (name) => projectRoot.replace(/[^\\/]+$/, name);
+    const otherRoot = sibling("command-project");
+    const objective = "Command fixture: review payments";
+    const otherObjective = "Command fixture: plan Project B";
+    const primary = (name) => buttonNamed('nav[aria-label="Primary navigation"] button', name);
+    const within = (node, label) => Array.from(node?.querySelectorAll("button") ?? []).find(
+      (button) => text(button) === label && button.matches(":enabled"),
+    );
+    const samePath = (node, expected) => {
+      const path = text(node);
+      return path && normalizeWindowsPath(path) === normalizeWindowsPath(expected);
+    };
+    const card = (root) => Array.from(document.querySelectorAll(".command-card")).find(
+      (candidate) => samePath(candidate.querySelector(".command-card-root"), root),
+    );
+    const a = () => card(projectRoot);
+    const b = () => card(otherRoot);
+    const focus = (container, workObjective) => Array.from(container?.querySelectorAll(".command-focus li") ?? []).find(
+      (item) => text(item.querySelector("strong")) === workObjective,
+    );
+    const attention = () => Array.from(b()?.querySelectorAll(".command-attention li") ?? []).find(
+      (item) => text(item.querySelector("code")) === "PLANNING_REQUIRED",
+    );
+    const fact = (name) => valueFor(a(), name);
+    const project = (root) => samePath(document.querySelector(".project-result code"), root);
+    const active = (sessionId, provider) => fact("Active session") === sessionId &&
+      fact("Provider") === provider && fact("Session state") === "RUNNING";
+    if (!(await waitFor(() => primary("Command")?.matches(":enabled")))) return report("fail [command-cards]");
+    primary("Command").click();
+    if (!(await waitFor(() => fact("Availability") === "AVAILABLE" && sha256(fact("Import snapshot")) &&
+      valueFor(b(), "Availability") === "AVAILABLE" && valueFor(b(), "Validation") === "NOT_VERIFIED" &&
+      focus(b(), otherObjective) && within(attention(), "Open Attention") &&
+      valueFor(card(sibling("missing-project")), "Availability") === "MISSING" &&
+      valueFor(card(sibling("command-invalid-project")), "Availability") === "UNAVAILABLE" &&
+      text(card(sibling("command-invalid-project"))?.querySelector("[role=alert] code")) === "PROJECT_STATE_UNAVAILABLE"
+    ))) return report("fail [command-cards]");
+    const bBefore = text(b());
+    const bWorkId = text(focus(b(), otherObjective)?.querySelector("code"));
+    if (!bWorkId || valueFor(b(), "Active session")) return report("fail [command-cards]");
+
+    if (mode === "command-passive") {
+      const observed = () => document.querySelector("time.command-observed")?.dateTime;
+      if (!(await waitFor(() => observed()))) return report("fail [command-read]");
+      const baselineObservation = observed();
+      const aBefore = text(a());
+      if (!(await waitFor(() => observed() && observed() !== baselineObservation))) return report("fail [command-read]");
+      const periodicObservation = observed();
+      const refresh = buttonNamed("button", "Refresh Command");
+      if (!refresh?.matches(":enabled")) return report("fail [command-read]");
+      refresh.click();
+      if (!(await waitFor(() => observed() && observed() !== periodicObservation)) ||
+          text(a()) !== aBefore || text(b()) !== bBefore) return report("fail [command-read]");
+      return report("pass");
+    }
+
+    within(a(), "Open Project")?.click();
+    if (!(await waitFor(() => project(projectRoot) && view("Work")?.matches(":enabled")))) {
+      return report("fail [command-start]");
+    }
+    view("Work").click();
+    if (!(await waitFor(() => document.querySelector("#work-objective")?.matches(":enabled")))) {
+      return report("fail [command-start]");
+    }
+    setInput(document.querySelector("#work-objective"), objective);
+    setInput(document.querySelector("#work-scope"), "CHANGE");
+    setInput(document.querySelector("#work-criteria"), "Verify the payments service regression checks.");
+    const create = () => buttonNamed(".work-form button", "Create Work Item");
+    if (!(await waitFor(() => create()?.matches(":enabled")))) return report("fail [command-start]");
+    create().form.requestSubmit(create());
+    const workflow = () => document.querySelector(".adaptive-workflow");
+    const workflowFact = (name) => valueFor(workflow(), name);
+    if (!(await waitFor(() => workflowFact("Selected scope") === "CHANGE" && workflowFact("Stage") === "READY" &&
+      document.querySelector("#adaptive-provider")?.matches(":enabled")))) return report("fail [command-start]");
+    setInput(document.querySelector("#adaptive-provider"), "codex");
+    const start = () => within(workflow(), "Start adaptive workflow");
+    if (!(await waitFor(start))) return report("fail [command-start]");
+    start().form.requestSubmit(start());
+    if (!(await waitFor(() => {
+      if (workflowFact("Session state") === "RUNNING" && workflowFact("Latest session") &&
+          sha256(workflowFact("Projection digest"))) return true;
+      within(workflow(), "Refresh workflow")?.click();
+      return false;
+    }))) return report("fail [command-start]");
+    const sourceId = workflowFact("Latest session");
+    const sourceDigest = workflowFact("Projection digest");
+    primary("Command").click();
+    if (!(await waitFor(() => active(sourceId, "codex") && within(attention(), "Open Attention") &&
+      within(focus(a(), objective), "Open Work Item")))) return report("fail [command-work]");
+    const aWorkId = text(focus(a(), objective)?.querySelector("code"));
+    if (!aWorkId || aWorkId === bWorkId) return report("fail [command-work]");
+
+    within(attention(), "Open Attention").click();
+    if (!(await waitFor(() => project(otherRoot) && workflowFact("Stage") === "PLANNING_REQUIRED" &&
+      valueFor(document.querySelector(".work-selection"), "Work Item ID") === bWorkId &&
+      text(document.querySelector(".work-selection strong")) === otherObjective &&
+      within(workflow(), "Open Validation")))) return report("fail [command-attention]");
+    within(workflow(), "Open Validation").click();
+    if (!(await waitFor(() => project(otherRoot) &&
+      text(document.querySelector(".validation-view .work-selection code")) === bWorkId &&
+      text(document.querySelector(".validation-view .work-selection [data-status]")) === "NOT_VERIFIED"
+    ))) return report("fail [command-attention]");
+    primary("Command").click();
+    if (!(await waitFor(() => active(sourceId, "codex") && text(b()) === bBefore &&
+      within(focus(a(), objective), "Open Work Item")))) return report("fail [command-work]");
+    within(focus(a(), objective), "Open Work Item").click();
+    const work = () => document.querySelector(".work-items .work-selection");
+    if (!(await waitFor(() => project(projectRoot) && text(work()?.querySelector("strong")) === objective &&
+      valueFor(work(), "Work Item ID") === aWorkId && within(work(), "Open Agent Session")))) {
+      return report("fail [command-work]");
+    }
+    within(work(), "Open Agent Session").click();
+    const session = () => document.querySelector(".session-detail");
+    if (!(await waitFor(() => text(session()?.querySelector("h4")) === sourceId &&
+      valueFor(session(), "State") === "RUNNING" && valueFor(session(), "Provider") === "codex" &&
+      valueFor(session(), "Work Item") === aWorkId && valueFor(session(), "Context digest") === sourceDigest &&
+      text(session()?.querySelector(".session-events"))?.includes("Deterministic session output") &&
+      within(session(), "Open Context Projection")))) return report("fail [command-agent]");
+    const sourceProjection = valueFor(session(), "Context projection");
+    within(session(), "Open Context Projection").click();
+    const projection = () => document.querySelector(".projection-detail");
+    if (!(await waitFor(() => valueFor(projection(), "Projection") === sourceProjection &&
+      valueFor(projection(), "Work Item") === aWorkId &&
+      valueFor(projection(), "Projection digest") === sourceDigest &&
+      Array.from(projection()?.querySelectorAll(".context-sources li") ?? []).some((row) =>
+        valueFor(row, "Identity") === "src/payments.py" && text(row.querySelector("strong"))?.includes("OPERATIONAL"))
+    ))) return report("fail [command-context]");
+
+    primary("Command").click();
+    if (!(await waitFor(() => active(sourceId, "codex") && within(a(), "Switch Provider") &&
+      text(b()) === bBefore))) return report("fail [command-switch]");
+    within(a(), "Switch Provider").click();
+    const switchPanel = () => document.querySelector(".provider-switch");
+    const switchFact = (name) => valueFor(switchPanel(), name);
+    const switchAction = (name) => within(switchPanel(), name);
+    const switchStage = () => text(switchPanel()?.querySelector(".switch-stage"));
+    const targetField = () => switchPanel()?.querySelector("#switch-target-provider");
+    if (!(await waitFor(() => project(projectRoot) && text(session()?.querySelector("h4")) === sourceId &&
+      targetField()?.matches(":enabled")))) return report("fail [command-switch]");
+    setInput(targetField(), "claude");
+    if (!(await waitFor(() => switchStage() === "SOURCE_ACTIVE" && switchAction("Switch provider")))) {
+      return report("fail [command-switch]");
+    }
+    switchAction("Switch provider").click();
+    if (!(await waitFor(() => switchStage() === "SOURCE_TERMINAL" && switchFact("Source state") === "CANCELLED" &&
+      switchAction("Continue switch")))) return report("fail [command-switch]");
+    switchAction("Continue switch").click();
+    if (!(await waitFor(() => switchStage() === "TARGET_SESSION_ACTIVE" && switchFact("Target state") === "RUNNING" &&
+      switchFact("Target session") && switchFact("Target session") !== sourceId && switchFact("Source provider") === "codex" &&
+      switchFact("Work Item") === aWorkId && switchFact("Source Handoff") && sha256(switchFact("Handoff digest")) &&
+      switchFact("Target Projection") && switchFact("Target Projection") !== sourceProjection &&
+      sha256(switchFact("Projection digest")) && switchAction("Replay switch")))) return report("fail [command-switch]");
+    const targetId = switchFact("Target session");
+    switchAction("Replay switch").click();
+    if (!(await waitFor(() => switchFact("Target session") === targetId &&
+      text(switchPanel()?.querySelector(".switch-replay-confirmed")) === "Existing target session confirmed."))) {
+      return report("fail [command-replay]");
+    }
+    primary("Command").click();
+    if (!(await waitFor(() => active(targetId, "claude") && text(b()) === bBefore &&
+      text(focus(a(), objective)?.querySelector("code")) === aWorkId))) return report("fail [command-switch]");
+    return report("pass");
+  }
+
   async function verify() {
     const backendReady = await waitFor(() => {
       const backend = document.querySelector("#backend-title")?.closest("section");
@@ -251,6 +419,7 @@
       );
     });
     if (!backendReady) return report("fail [backend]");
+    if (mode.startsWith("command-")) return verifyCommand();
     if (mode.startsWith("import-")) return verifyImport();
     if (mode === "adaptive" || mode === "adaptive-passive") return verifyAdaptive();
     const startSessions = mode === "sessions";

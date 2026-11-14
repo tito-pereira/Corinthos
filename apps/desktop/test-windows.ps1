@@ -36,10 +36,15 @@ function Invoke-DesktopFixture([string] $Stage) {
     $observation = [IO.File]::ReadAllText($receipt).Trim()
     Assert-Spike ($observation -ceq 'pass') "The actual WebView failed its $Stage DOM checks: $observation"
 
-    if ($Stage -eq 'sessions') {
-        $providerTree = @(Get-CimInstance Win32_Process -Filter "Name = 'codex.exe'" |
-            Where-Object { $_.ExecutablePath -eq $explicitExe })
-        Assert-Spike ($providerTree.Count -eq 2) 'Cancel, timeout and switch should reap the earlier trees and leave one live provider with one child.'
+    if ($Stage -in @('sessions', 'command-active')) {
+        $liveExe = if ($Stage -eq 'sessions') { $explicitExe } else { $claudeExe }
+        $providerTree = @(Get-CimInstance Win32_Process -Filter "Name = 'codex.exe' OR Name = 'claude.exe'" |
+            Where-Object { $_.ExecutablePath -in @($explicitExe, $autoExe, $claudeExe) })
+        Assert-Spike ($providerTree.Count -eq 2 -and @($providerTree | Where-Object {
+            $_.ExecutablePath -eq $liveExe
+        }).Count -eq 2 -and @($providerTree | Where-Object {
+            $_.ParentProcessId -in $providerTree.ProcessId
+        }).Count -eq 1) 'Expect exactly the live provider and its direct child, with all earlier trees reaped.'
     }
     Assert-Spike ($desktopProcess.CloseMainWindow()) 'Could not request desktop shutdown.'
     Assert-Spike ($desktopProcess.WaitForExit(22000) -and $desktopProcess.ExitCode -eq 0) 'Desktop shutdown did not complete.'
@@ -179,7 +184,8 @@ internal static class Provider {
                 Console.WriteLine("{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":1}}");
                 return 0;
             }
-            if (input.Contains("Import fixture: review payments")) {
+            bool command = input.Contains("Command fixture: review payments");
+            if (!command && input.Contains("Import fixture: review payments")) {
                 if (!input.Contains("PHASE7_PAYMENTS_REPOSITORY_MARKER") ||
                     input.Contains("PHASE7_UNRELATED_CALENDAR_MARKER")) return 4;
                 File.AppendAllText(log, "import-change-launch" + Environment.NewLine);
@@ -188,7 +194,9 @@ internal static class Provider {
                 Console.WriteLine("{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":1}}");
                 return 0;
             }
-            File.AppendAllText(log, "launch" + Environment.NewLine);
+            if (command && (!input.Contains("PHASE7_PAYMENTS_REPOSITORY_MARKER") ||
+                input.Contains("PHASE7_UNRELATED_CALENDAR_MARKER"))) return 4;
+            File.AppendAllText(log, (command ? "command-source-launch" : "launch") + Environment.NewLine);
             using (var child = Process.Start(new ProcessStartInfo {
                 FileName = Assembly.GetExecutingAssembly().Location,
                 Arguments = "fixture-child",
@@ -209,11 +217,18 @@ internal static class Provider {
     [IO.File]::WriteAllText($claudeSource, @'
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Reflection;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 internal static class ClaudeFixture {
     private static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "fixture-child") {
+            Thread.Sleep(120000);
+            return 0;
+        }
         string log = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "claude.log");
         if (args.Length == 1 && args[0] == "--version") {
             File.AppendAllText(log, "--version" + Environment.NewLine);
@@ -255,8 +270,24 @@ internal static class ClaudeFixture {
             }
         }
         if (!sourceObserved) return 6;
-        File.AppendAllText(log, "launch" + Environment.NewLine);
         const string nativeId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        if (input.Contains("Command fixture: review payments")) {
+            if (!input.Contains("PHASE7_PAYMENTS_REPOSITORY_MARKER") ||
+                input.Contains("PHASE7_UNRELATED_CALENDAR_MARKER")) return 7;
+            using (var child = Process.Start(new ProcessStartInfo {
+                FileName = Assembly.GetExecutingAssembly().Location,
+                Arguments = "fixture-child",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })) {
+                File.AppendAllText(log, "command-target-launch" + Environment.NewLine);
+                Console.WriteLine(json.Serialize(new { type = "system", subtype = "init", session_id = nativeId }));
+                Console.Out.Flush();
+                Thread.Sleep(120000);
+            }
+            return 0;
+        }
+        File.AppendAllText(log, "launch" + Environment.NewLine);
         Console.WriteLine(json.Serialize(new { type = "system", subtype = "init", session_id = nativeId }));
         Console.WriteLine(json.Serialize(new {
             type = "result", subtype = "success", is_error = false, session_id = nativeId,
@@ -522,6 +553,101 @@ with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True))
     [IO.File]::WriteAllText($importCheck, $assertImport)
     Invoke-PrivatePython $paths.Install @($importCheck, (Join-Path $private 'state.db'))
     Write-Host 'Actual WebView previewed and confirmed a dirty external Git repository, preserved tracked bytes and Git state, then executed a CHANGE with imported payments context and reaped all fixture processes.'
+
+    $commandProject = Join-Path $root 'command-project'
+    $null = Invoke-PrivatePython $paths.Install @('-m', 'corinthos', 'init', $commandProject)
+    $null = Invoke-PrivatePython $paths.Install @('-m', 'corinthos', 'work', 'create',
+        '--root', $commandProject, '--scope', 'PROJECT', '--objective', 'Command fixture: plan Project B',
+        '--criterion', 'Review the independent project scope.')
+    $null = Invoke-PrivatePython $paths.Install @('-c',
+        'import sys; from corinthos.project_registry import ProjectRegistryService; ProjectRegistryService().remember(sys.argv[1])',
+        $commandProject)
+    $invalidProject = Join-Path $root 'command-invalid-project'
+    $invalidPrivate = Join-Path $invalidProject '.corinthos'
+    [void] [IO.Directory]::CreateDirectory($invalidPrivate)
+    $invalidDatabase = Join-Path $invalidPrivate 'state.db'
+    [IO.File]::WriteAllText($invalidDatabase, 'Command fixture intentionally invalid database')
+    $savedRegistry = Get-Content -Raw -LiteralPath $recent | ConvertFrom-Json
+    $savedRegistry.projects += [pscustomobject] @{
+        root = $invalidProject
+        last_accessed_at = '2026-01-01T00:00:00Z'
+    }
+    [IO.File]::WriteAllText($recent, ($savedRegistry | ConvertTo-Json -Depth 4))
+
+    $commandDatabase = Join-Path $commandProject '.corinthos\state.db'
+    $importDatabase = Join-Path $private 'state.db'
+    $passiveFiles = @($importDatabase, $commandDatabase, $invalidDatabase, $recent, $registry,
+        (Join-Path $private 'bootstrap.json'), (Join-Path $commandProject '.corinthos\bootstrap.json'),
+        $configuredLog, $claudeLog)
+    $passiveHashes = @{}
+    foreach ($name in $passiveFiles) {
+        $passiveHashes[$name] = (Get-FileHash -LiteralPath $name).Hash
+    }
+    Invoke-DesktopFixture 'command-passive'
+    foreach ($name in $passiveFiles) {
+        Assert-Spike ((Get-FileHash -LiteralPath $name).Hash -eq $passiveHashes[$name]) "Passive Command changed $name."
+    }
+    Assert-Spike (![IO.File]::Exists($autoLog)) 'Passive Command ran a PATH provider.'
+
+    $codexCount = [IO.File]::ReadAllLines($configuredLog).Length
+    $claudeCount = [IO.File]::ReadAllLines($claudeLog).Length
+    Invoke-DesktopFixture 'command-active'
+    $newCodexCalls = ([IO.File]::ReadAllLines($configuredLog) | Select-Object -Skip $codexCount) -join '|'
+    $newClaudeCalls = ([IO.File]::ReadAllLines($claudeLog) | Select-Object -Skip $claudeCount) -join '|'
+    Assert-Spike ($newCodexCalls -ceq '--version|--help|exec --help|exec resume --help|command-source-launch' -and
+        $newClaudeCalls -ceq '--version|--help|--version|--help|--version|--help|command-target-launch' -and
+        ![IO.File]::Exists($autoLog)) 'Command provider calls escaped the explicit start and switch, or replay launched again.'
+    foreach ($name in $passiveFiles | Where-Object { $_ -notin @($importDatabase, $configuredLog, $claudeLog) }) {
+        Assert-Spike ((Get-FileHash -LiteralPath $name).Hash -eq $passiveHashes[$name]) "Active Command changed unrelated state $name."
+    }
+    $assertCommand = @'
+import json, sqlite3, sys
+from contextlib import closing
+from pathlib import Path
+
+with closing(sqlite3.connect(Path(sys.argv[1]).as_uri() + "?mode=ro", uri=True)) as db:
+    db.row_factory = sqlite3.Row
+    work = db.execute(
+        "SELECT work_item_id FROM work_items WHERE objective = ? AND status = 'OPEN' AND scope_level = 'CHANGE'",
+        ("Command fixture: review payments",),
+    ).fetchone()
+    assert work is not None
+    attempts = db.execute(
+        "SELECT a.*, p.canonical_payload, p.projection_digest FROM agent_sessions a "
+        "JOIN context_projections p ON p.projection_id = a.context_projection_id "
+        "AND p.project_id = a.project_id AND p.work_item_id = a.work_item_id "
+        "WHERE a.work_item_id = ? ORDER BY a.created_at, a.session_id",
+        (work["work_item_id"],),
+    ).fetchall()
+    assert [(attempt["provider"], attempt["state"], attempt["cleanup_unconfirmed"]) for attempt in attempts] == [
+        ("codex", "CANCELLED", 0), ("claude", "INTERRUPTED", 0),
+    ]
+    source, target = attempts
+    assert source["session_id"] != target["session_id"]
+    assert source["context_projection_id"] != target["context_projection_id"]
+    assert source["projection_digest"] != target["projection_digest"]
+    handoff = db.execute(
+        "SELECT handoff_id, terminal_state, provider FROM session_handoffs "
+        "WHERE source_session_id = ? AND work_item_id = ?",
+        (source["session_id"], work["work_item_id"]),
+    ).fetchall()
+    assert [tuple(row) for row in handoff] == [
+        (json.loads(target["canonical_payload"])["required_handoff_id"], "CANCELLED", "codex"),
+    ]
+    assert db.execute("SELECT COUNT(*) FROM contracts").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM wf_executions").fetchone()[0] == 0
+'@
+    $commandCheck = Join-Path $work 'check_command.py'
+    [IO.File]::WriteAllText($commandCheck, $assertCommand)
+    Invoke-PrivatePython $paths.Install @($commandCheck, $importDatabase)
+    Assert-Spike (((Invoke-FixtureGit @('rev-parse', 'HEAD')) -ceq $headBefore) -and
+        ((Get-FileHash -LiteralPath $index).Hash -eq $indexBefore) -and
+        ((Get-FileHash -LiteralPath $config).Hash -eq $configBefore) -and
+        (((Invoke-FixtureGit @('status', '--porcelain=v1', '--untracked-files=no')) -join "`n") -ceq $gitBefore)) 'Command changed the imported Git repository state.'
+    foreach ($name in $files.Keys) {
+        Assert-Spike ((Get-FileHash -LiteralPath (Join-Path $project $name)).Hash -eq $fileHashes[$name]) 'Command changed imported tracked bytes.'
+    }
+    Write-Host 'Actual WebView polled Command read-only, navigated independent projects, switched the exact active Work Item with replay, and reaped the target provider tree on close.'
 
     $prior = [IO.File]::ReadAllLines($configuredLog).Length
     $null = Invoke-PrivatePython $paths.Install @('-m','corinthos','adapters','refresh')

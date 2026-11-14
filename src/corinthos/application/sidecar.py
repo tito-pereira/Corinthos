@@ -8,10 +8,13 @@ from typing import BinaryIO, TextIO
 
 from corinthos.application import (
     adaptive,
+    command,
     context,
     external_import,
     project_status,
     providers_status,
+    reviews,
+    settings,
     version,
     workspace,
 )
@@ -39,6 +42,15 @@ _WORK_CONTENT = (
     "depends_on",
 )
 _V2_OPERATIONS = {
+    "command.overview": (command.command_overview, (), _PAGE_OPTIONS),
+    "command.project": (command.command_project, ("root",), ()),
+    "settings.providers": (settings.settings_providers, (), ("root",)),
+    "providers.refresh": (settings.providers_refresh, (), ()),
+    "provider.configure": (settings.provider_configure, ("provider", "executable"), ("root",)),
+    "provider.reset": (settings.provider_reset, ("provider",), ("root",)),
+    "review.list": (reviews.review_list, ("root",), _PAGE_OPTIONS),
+    "review.get": (reviews.review_get, ("root", "kind", "session_id"), ()),
+    "review.defer": (reviews.review_defer, ("root", "kind", "session_id", "version", "digest"), ()),
     "context.create": (context.context_create, ("root", "work_item_id", "provider"), ()),
     "context.get": (context.context_get, ("root", "projection_id"), ()),
     "context.list": (context.context_list, ("root",), ("work_item_id", *_PAGE_OPTIONS)),
@@ -129,6 +141,10 @@ _SESSION_OPERATIONS = {
     ),
 }
 _MUTATIONS = {
+    "providers.refresh",
+    "provider.configure",
+    "provider.reset",
+    "review.defer",
     "context.create",
     "handoff.create",
     "project.open",

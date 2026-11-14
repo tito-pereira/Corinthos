@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AdaptiveWorkflow } from "./AdaptiveWorkflow";
-import { bridge, workScopes, type ProviderStatus, type WorkItem, type WorkNode } from "./bridge";
+import { bridge, workScopes, type ProjectTarget, type ProviderStatus, type WorkItem, type WorkNode } from "./bridge";
 
-export function WorkItems({ root, methods, providers, onChange }: {
+export function WorkItems({ root, methods, providers, initialId, onSelect, openTarget, onChange }: {
   root: string;
   methods: string[];
   providers: ProviderStatus[];
+  initialId?: string;
+  onSelect: (id: string) => void;
+  openTarget: (target: ProjectTarget) => void;
   onChange: () => Promise<void>;
 }) {
   const [nodes, setNodes] = useState<WorkNode[]>([]);
@@ -20,6 +23,8 @@ export function WorkItems({ root, methods, providers, onChange }: {
   const [criteria, setCriteria] = useState("");
   const [child, setChild] = useState(false);
   const [status, setStatus] = useState("");
+  const pending = useRef(false);
+  const initialSelection = useRef(initialId);
   const canCreate = methods.includes("work.create");
   const canPick = methods.includes("work.get");
   const canTransition = methods.includes("work.status");
@@ -32,6 +37,8 @@ export function WorkItems({ root, methods, providers, onChange }: {
   }
 
   async function run(action: () => Promise<void>, message: string) {
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -39,33 +46,40 @@ export function WorkItems({ root, methods, providers, onChange }: {
     } catch {
       setError(message);
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
 
   useEffect(() => {
     let active = true;
-    bridge.workTree(root, 0).then(
-      (result) => {
+    pending.current = true;
+    async function load() {
+      try {
+        const result = await bridge.workTree(root, 0);
         if (!active) return;
         setNodes(result.nodes);
         setNextOffset(result.next_offset);
-        setBusy(false);
-      },
-      () => {
-        if (!active) return;
-        setError("Could not load the Work Item tree.");
-        setBusy(false);
-      },
-    );
+        if (initialSelection.current && canPick) {
+          const selected = await bridge.workGet(root, initialSelection.current);
+          if (active) setItem(selected);
+        }
+      } catch {
+        if (active) setError("Could not load the Work Items. Refresh the project or choose a Work Item.");
+      } finally {
+        if (active) { pending.current = false; setBusy(false); }
+      }
+    }
+    void load();
     return () => { active = false; };
-  }, [root]);
+  }, [root, canPick]);
 
   async function pick(id: string) {
     await run(async () => {
       setChild(false);
       setStatus("");
       setItem(await bridge.workGet(root, id));
+      onSelect(id);
     }, "Could not load the Work Item.");
   }
 
@@ -102,6 +116,7 @@ export function WorkItems({ root, methods, providers, onChange }: {
       setChild(false);
       setStatus("");
       setItem(created);
+      onSelect(created.work_item_id);
       await loadTree(0);
       await onChange();
     }, "Could not confirm creation and refresh. Check the Work Item list before retrying.");
@@ -147,7 +162,12 @@ export function WorkItems({ root, methods, providers, onChange }: {
       {item && (
         <div className="work-selection" aria-live="polite">
           <strong>{item.objective}</strong>
+          <dl className="facts"><div><dt>Work Item ID</dt><dd><code>{item.work_item_id}</code></dd></div></dl>
           <p>{item.scope_level} · {item.status}</p>
+          {item.acceptance_criteria?.length ? <div>
+            <h4>Acceptance criteria</h4>
+            <ul>{item.acceptance_criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
+          </div> : null}
           {canTransition && choices.length > 0 && (
             <form onSubmit={(event) => void transition(event)}>
               <label htmlFor="work-status">{canViewFlow ? "Change operational status" : "Change status"}</label>
@@ -161,7 +181,7 @@ export function WorkItems({ root, methods, providers, onChange }: {
             </form>
           )}
           {canViewFlow && <AdaptiveWorkflow key={item.work_item_id}
-            root={root} item={item} methods={methods} providers={providers} disabled={busy} run={run} onChanged={async () => {
+            root={root} item={item} methods={methods} providers={providers} disabled={busy} run={run} openTarget={openTarget} onChanged={async () => {
               setItem(await bridge.workGet(root, item.work_item_id));
               await loadTree(offset);
               await onChange();

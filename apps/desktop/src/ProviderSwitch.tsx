@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { useEffect, useState, type FormEvent } from "react";
-import { bridge, type AgentSession, type ProviderStatus, type SwitchView } from "./bridge";
+import { bridge, type AgentSession, type ProjectTarget, type ProviderStatus, type SwitchView } from "./bridge";
 
 const blockers: Record<string, string> = {
   TARGET_UNAVAILABLE: "The selected target provider is unavailable.",
@@ -11,12 +11,15 @@ const blockers: Record<string, string> = {
   SOURCE_LEASE_EXPIRED: "The source session needs reconciliation.",
 };
 
-export function ProviderSwitch({ root, source, providers, disabled, onSession }: {
+export function ProviderSwitch({ root, source, providers, disabled, onSession, openTarget, canOpenProjection, canOpenHandoff }: {
   root: string;
   source: AgentSession;
   providers: ProviderStatus[];
   disabled: boolean;
   onSession: (sessionId: string) => void;
+  openTarget: (target: ProjectTarget) => void;
+  canOpenProjection: boolean;
+  canOpenHandoff: boolean;
 }) {
   const [target, setTarget] = useState("");
   const [view, setView] = useState<SwitchView | null>(null);
@@ -127,8 +130,14 @@ export function ProviderSwitch({ root, source, providers, disabled, onSession }:
             {view.target_session_id && <div><dt>Target session</dt><dd><code>{view.target_session_id}</code></dd></div>}
             {view.target_state && <div><dt>Target state</dt><dd>{view.target_state}</dd></div>}
           </dl>
+          <div className="field-row">
+          {view.handoff_id && canOpenHandoff && <button type="button" className="secondary" disabled={disabled || pending}
+            onClick={() => openTarget({ tab: "context", id: view.handoff_id!, handoff: true })}>Open Handoff</button>}
+          {view.projection_id && canOpenProjection && <button type="button" className="secondary" disabled={disabled || pending}
+            onClick={() => openTarget({ tab: "context", id: view.projection_id! })}>Open Target Projection</button>}
           {targetSession && <button type="button" disabled={disabled || pending}
             onClick={() => onSession(targetSession)}>Open target session</button>}
+          </div>
         </>
       )}
     </section>

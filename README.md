@@ -459,6 +459,7 @@ release. Actual results and outstanding limits remain tied to their evidence.
 - [v0.1 Provider Switch and crash-safe replay](docs/v0.1/phase-5-provider-switch.md)
 - [v0.1 Adaptive Workflow and scope-dependent gates](docs/v0.1/phase-6-adaptive-workflow.md)
 - [v0.1 External Git repository import](docs/v0.1/phase-7-external-project-import.md)
+- [v0.1 Corinthos Command and desktop](docs/v0.1/phase-8-command.md)
 - [Architecture and six Engines](docs/architecture.md)
 - [Eight contract types](docs/contracts.md)
 - [Project Manager tutorial, approval and service API](docs/project-manager.md)

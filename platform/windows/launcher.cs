@@ -10,8 +10,38 @@ internal static class Launcher
 {
     private static int Main(string[] args)
     {
+        string directory = AppDomain.CurrentDomain.BaseDirectory;
+        string desktop = Path.Combine(directory, "corinthos-desktop.exe");
+        if (args.Length == 0 && File.Exists(desktop))
+        {
+            try
+            {
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||
+                    (File.GetAttributes(desktop) & FileAttributes.ReparsePoint) != 0)
+                {
+                    Console.Error.WriteLine("Corinthos desktop must be an ordinary installed executable.");
+                    return 1;
+                }
+                using (Process child = Process.Start(new ProcessStartInfo(desktop)
+                {
+                    WorkingDirectory = directory,
+                    UseShellExecute = false
+                }))
+                {
+                    return 0;
+                }
+            }
+            catch (Exception error)
+            {
+                if (!(error is Win32Exception || error is IOException ||
+                      error is UnauthorizedAccessException))
+                    throw;
+                Console.Error.WriteLine("Corinthos could not start the installed desktop. " + error.Message);
+                return 1;
+            }
+        }
         string executable = Path.GetFullPath(Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "..", "runtime", "python.exe"));
+            directory, "..", "runtime", "python.exe"));
         var arguments = new StringBuilder("-I -B -X utf8 -m corinthos");
         foreach (string arg in args)
         {

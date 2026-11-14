@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/command-project-result.schema.json",
+  "$defs": {
+    "id": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "nullableId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "ref": {
+      "$ref": "contract-reference.schema.json",
+      "properties": { "contract_id": {}, "revision_id": {}, "contract_type": {}, "project_id": {} },
+      "additionalProperties": false
+    },
+    "nullableRef": { "anyOf": [{ "$ref": "#/$defs/ref" }, { "type": "null" }] },
+    "validationState": { "enum": ["NOT_VERIFIED", "VERIFIED", "BLOCKED"] },
+    "workId": { "type": "string", "pattern": "^work-[0-9a-f]{32}$" },
+    "projectionId": { "type": "string", "pattern": "^projection-[0-9a-f]{32}$" },
+    "session": {
+      "type": "object",
+      "properties": {
+        "session_id": { "$ref": "session-result.schema.json#/properties/session_id" },
+        "work_item_id": { "$ref": "#/$defs/workId" },
+        "project_id": { "$ref": "#/$defs/id" },
+        "provider": { "$ref": "session-result.schema.json#/properties/provider" },
+        "state": { "$ref": "session-result.schema.json#/properties/state" },
+        "run_generation": { "$ref": "session-result.schema.json#/properties/run_generation" },
+        "cleanup_unconfirmed": { "type": "boolean" },
+        "context_projection_id": { "anyOf": [{ "$ref": "#/$defs/projectionId" }, { "type": "null" }] },
+        "input_tokens": { "$ref": "session-result.schema.json#/properties/input_tokens" },
+        "output_tokens": { "$ref": "session-result.schema.json#/properties/output_tokens" },
+        "cached_tokens": { "$ref": "session-result.schema.json#/properties/cached_tokens" },
+        "reported_cost": { "$ref": "session-result.schema.json#/properties/reported_cost" },
+        "reported_cost_currency": { "$ref": "session-result.schema.json#/properties/reported_cost_currency" }
+      },
+      "required": ["session_id", "work_item_id", "project_id", "provider", "state", "run_generation", "cleanup_unconfirmed", "context_projection_id", "input_tokens", "output_tokens", "cached_tokens", "reported_cost", "reported_cost_currency"],
+      "additionalProperties": false
+    },
+    "nullableSession": { "anyOf": [{ "$ref": "#/$defs/session" }, { "type": "null" }] },
+    "sessionSummary": {
+      "type": "object",
+      "properties": {
+        "active": { "$ref": "#/$defs/nullableSession" },
+        "latest_terminal": { "$ref": "#/$defs/nullableSession" },
+        "total": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["active", "latest_terminal", "total"],
+      "additionalProperties": false
+    },
+    "externalImport": {
+      "type": "object",
+      "properties": {
+        "snapshot_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+        "discovery_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+        "summary": { "$ref": "import-status-result.schema.json#/$defs/summary" }
+      },
+      "required": ["snapshot_digest", "discovery_digest", "summary"],
+      "additionalProperties": false
+    },
+    "focus": {
+      "type": "object",
+      "properties": {
+        "authority": { "const": "OPERATIONAL" },
+        "work_item_id": { "$ref": "#/$defs/workId" },
+        "project_id": { "$ref": "#/$defs/id" },
+        "objective": { "type": "string", "maxLength": 180 },
+        "status": { "$ref": "work-item-result.schema.json#/properties/status" },
+        "scope_level": { "$ref": "work-item-result.schema.json#/properties/scope_level" },
+        "stage": { "anyOf": [{ "$ref": "adaptive-flow-result.schema.json#/properties/stage" }, { "type": "null" }] },
+        "blockers": { "$ref": "adaptive-flow-result.schema.json#/properties/blockers" },
+        "next_actions": { "$ref": "adaptive-flow-result.schema.json#/properties/next_actions" },
+        "validation_state": { "$ref": "#/$defs/validationState" },
+        "validation_result_refs": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/ref" } },
+        "latest_session": { "$ref": "adaptive-flow-result.schema.json#/properties/latest_session" },
+        "latest_projection": { "$ref": "adaptive-flow-result.schema.json#/properties/latest_projection" },
+        "provider_continuity": { "$ref": "adaptive-flow-result.schema.json#/properties/provider_continuity" }
+      },
+      "required": ["authority", "work_item_id", "project_id", "objective", "status", "scope_level", "stage", "blockers", "next_actions", "validation_state", "validation_result_refs", "latest_session", "latest_projection", "provider_continuity"],
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "state": { "$ref": "#/$defs/validationState" },
+        "latest_run": {
+          "allOf": [
+            { "$ref": "project-summary-result.schema.json#/properties/validation" },
+            {
+              "properties": {
+                "run_id": {}, "state": {}, "plan": { "$ref": "#/$defs/ref" },
+                "result": { "$ref": "#/$defs/nullableRef" }, "plan_is_active": {}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "active_plan_refs": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/ref" } },
+        "outcome": { "enum": ["SATISFIED", "BLOCKED", null] }
+      },
+      "required": ["state", "latest_run", "active_plan_refs", "outcome"],
+      "additionalProperties": false
+    },
+    "latestContext": {
+      "type": "object",
+      "properties": {
+        "projection_id": { "$ref": "#/$defs/projectionId" },
+        "projection_digest": { "$ref": "import-common.schema.json#/$defs/digest" },
+        "work_item_id": { "$ref": "#/$defs/workId" },
+        "provider": { "$ref": "session-result.schema.json#/properties/provider" }
+      },
+      "required": ["projection_id", "projection_digest", "work_item_id", "provider"],
+      "additionalProperties": false
+    },
+    "attention": {
+      "type": "object",
+      "properties": {
+        "root": { "$ref": "import-common.schema.json#/$defs/root" },
+        "project_id": { "$ref": "#/$defs/nullableId" },
+        "kind": { "$ref": "import-common.schema.json#/$defs/code" },
+        "severity": { "enum": ["INFO", "ACTION", "BLOCKED"] },
+        "owner_type": { "enum": ["IMPORT", "PROJECT", "WORK_ITEM", "SESSION", "VALIDATION", "PROJECT_PLANNING", "WORKFLOW_PLANNING"] },
+        "owner_id": { "$ref": "#/$defs/nullableId" },
+        "reason_code": { "$ref": "import-common.schema.json#/$defs/code" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "navigation": { "enum": ["OVERVIEW", "WORK", "AGENTS", "CONTEXT", "VALIDATION"] },
+        "action_ids": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "authority": { "const": "DERIVED" }
+      },
+      "required": ["root", "project_id", "kind", "severity", "owner_type", "owner_id", "reason_code", "summary", "navigation", "action_ids", "authority"],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "root": { "$ref": "import-common.schema.json#/$defs/root" },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "last_accessed_at": { "$ref": "project-summary-result.schema.json#/properties/last_accessed_at" },
+    "availability": { "enum": ["AVAILABLE", "MISSING", "UNAVAILABLE"] },
+    "initialized": { "type": "boolean" },
+    "storage": { "$ref": "project-summary-result.schema.json#/properties/storage" },
+    "schema_version": { "$ref": "project-summary-result.schema.json#/properties/schema_version" },
+    "project_id": { "$ref": "#/$defs/nullableId" },
+    "error": { "enum": ["PROJECT_MISSING", "PROJECT_STATE_UNAVAILABLE", null] },
+    "active_project": { "$ref": "#/$defs/nullableRef" },
+    "active_workflow": { "$ref": "#/$defs/nullableRef" },
+    "external_import": { "anyOf": [{ "$ref": "#/$defs/externalImport" }, { "type": "null" }] },
+    "import_status": { "enum": ["IMPORTED", "INCOMPLETE", "INVALID", null] },
+    "work_counts": {
+      "$ref": "project-summary-result.schema.json#/properties/work_items",
+      "properties": { "total": {}, "by_status": {}, "by_scope": {} },
+      "additionalProperties": false
+    },
+    "focus_work_items": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/focus" } },
+    "sessions": { "anyOf": [{ "$ref": "#/$defs/sessionSummary" }, { "type": "null" }] },
+    "validation": { "$ref": "#/$defs/validation" },
+    "latest_context": { "anyOf": [{ "$ref": "#/$defs/latestContext" }, { "type": "null" }] },
+    "lifecycle": {
+      "$ref": "project-summary-result.schema.json#/properties/lifecycle",
+      "properties": { "tracker_id": {}, "enabled": {}, "active_build_id": {}, "pending_build_id": {}, "version": {} },
+      "additionalProperties": false
+    },
+    "attention": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/attention" } }
+  },
+  "required": ["root", "display_name", "last_accessed_at", "availability", "initialized", "storage", "schema_version", "project_id", "error", "active_project", "active_workflow", "external_import", "import_status", "work_counts", "focus_work_items", "sessions", "validation", "latest_context", "lifecycle", "attention"],
+  "additionalProperties": false
+}

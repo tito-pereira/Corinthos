@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Corinthos Desktop Spike",
+  "productName": "Corinthos",
   "version": "0.1.0",
   "identifier": "org.corinthos.desktop.spike",
   "build": {
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "Corinthos Desktop Spike",
+        "title": "Corinthos",
         "width": 1000,
         "height": 740,
         "minWidth": 620,

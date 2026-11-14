@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/review-summary.schema.json",
+  "type": "object",
+  "properties": {
+    "kind": { "enum": ["PROJECT", "WORKFLOW"] },
+    "session_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])" },
+    "project_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\\s\\S])" },
+    "state": { "enum": ["DRAFT", "NEEDS_CLARIFICATION", "READY_FOR_REVIEW", "AWAITING_EXPLICIT_APPROVAL", "PUBLISHING", "DEFERRED", "PUBLISHED", "CANCELLED", "CLOSED_UNCHANGED", "RETURNED", "CONFLICT"] },
+    "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "digest": { "$ref": "import-common.schema.json#/$defs/nullableDigest" },
+    "expires_at": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+  },
+  "required": ["kind", "session_id", "project_id", "state", "version", "digest", "expires_at"],
+  "additionalProperties": false
+}

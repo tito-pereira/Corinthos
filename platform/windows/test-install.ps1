@@ -139,6 +139,39 @@ try {
     Assert-Smoke ($LASTEXITCODE -eq 0 -and $version -like 'corinthos *') 'Installed command failed after the checkout moved.'
     $homeOutput = '0' | & corinthos
     Assert-Smoke ($LASTEXITCODE -eq 0 -and 'CORINTHOS' -in $homeOutput) 'The command did not forward stdin and stdout to Home.'
+    $desktop = Join-Path $paths.Bin 'corinthos-desktop.exe'
+    $desktopSource = Join-Path $sandbox 'desktop-sentinel.cs'
+    $desktopReceipt = Join-Path $paths.Bin 'desktop-sentinel.txt'
+    [IO.File]::WriteAllText($desktopSource, @'
+using System;
+using System.IO;
+
+internal static class DesktopSentinel
+{
+    public static void Main(string[] args)
+    {
+        string output = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "desktop-sentinel.txt");
+        File.WriteAllText(output + ".tmp", args.Length + ":" + System.Diagnostics.Process.GetCurrentProcess().Id);
+        File.Move(output + ".tmp", output);
+    }
+}
+'@)
+    & (Get-LauncherCompiler) /nologo /target:winexe /platform:x64 "/out:$desktop" $desktopSource | Out-Host
+    Assert-Smoke ($LASTEXITCODE -eq 0) 'Could not compile the disposable desktop sentinel.'
+    Assert-Smoke ((& corinthos --version) -ceq $version -and ![IO.File]::Exists($desktopReceipt)) 'CLI arguments unexpectedly started the desktop.'
+    & corinthos
+    Assert-Smoke ($LASTEXITCODE -eq 0) 'The no-argument launcher failed to start the adjacent desktop.'
+    $desktopDeadline = [Diagnostics.Stopwatch]::StartNew()
+    while (![IO.File]::Exists($desktopReceipt) -and $desktopDeadline.Elapsed.TotalSeconds -lt 10) {
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-Smoke ([IO.File]::Exists($desktopReceipt) -and [IO.File]::ReadAllText($desktopReceipt) -match '^0:([1-9][0-9]*)$') 'The launcher did not run the adjacent desktop with no arguments.'
+    $desktopProcess = Get-Process -Id ([int] $Matches[1]) -ErrorAction SilentlyContinue
+    if ($desktopProcess) {
+        Assert-Smoke ($desktopProcess.WaitForExit(5000)) 'The disposable desktop sentinel did not exit.'
+    }
+    [IO.File]::Delete($desktopReceipt)
+    [IO.File]::Delete($desktop)
     $errorOutput = & {
         $ErrorActionPreference = 'Continue'
         & corinthos --installer-smoke-invalid-option 2>&1

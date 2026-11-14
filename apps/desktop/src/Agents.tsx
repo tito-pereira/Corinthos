@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { bridge, type AgentSession, type ContextProjection, type ProviderStatus, type SessionEvent, type WorkNode } from "./bridge";
+import { bridge, type AgentSession, type ContextProjection, type ProjectTarget, type ProviderStatus, type SessionEvent, type WorkNode } from "./bridge";
 
 import { ProviderSwitch } from "./ProviderSwitch";
 
@@ -14,6 +14,8 @@ function SessionFacts({ session }: { session: AgentSession }) {
     State: session.state,
     "Work Item": session.work_item_id,
     Provider: session.provider,
+    Generation: session.run_generation,
+    "Read-only execution": session.read_only ? "Yes" : "No",
     "Provider version": session.provider_version,
     Model: session.model,
     Created: session.created_at,
@@ -37,10 +39,12 @@ function SessionFacts({ session }: { session: AgentSession }) {
   );
 }
 
-export function Agents({ root, methods, providers }: {
+export function Agents({ root, methods, providers, initialId, openTarget }: {
   root: string;
   methods: string[];
   providers: ProviderStatus[];
+  initialId?: string;
+  openTarget: (target: ProjectTarget) => void;
 }) {
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [offset, setOffset] = useState(0);
@@ -122,6 +126,10 @@ export function Agents({ root, methods, providers }: {
           const result = await bridge.workTree(root, 0);
           if (mounted) setWork(result.nodes);
         }
+        if (initialId && canGet) {
+          const selected = await bridge.sessionGet(root, initialId);
+          if (mounted) await select(selected);
+        }
       } catch {
         if (mounted) setError("Could not load the Agents view. Refresh to retry.");
       } finally {
@@ -133,7 +141,7 @@ export function Agents({ root, methods, providers }: {
     }
     void load();
     return () => { mounted = false; };
-  }, [root, methods, canStart]);
+  }, [root, methods, canStart, canGet, initialId]);
 
   const shouldPoll = Boolean(detail && activeStates.includes(detail.state))
     || sessions.some((session) => activeStates.includes(session.state));
@@ -244,6 +252,10 @@ export function Agents({ root, methods, providers }: {
             </dl>
           )}
           <div className="field-row">
+            {methods.includes("work.get") && <button type="button" className="secondary" disabled={busy}
+              onClick={() => openTarget({ tab: "work", id: detail.work_item_id })}>Open Work Item</button>}
+            {binding && methods.includes("context.get") && <button type="button" className="secondary" disabled={busy}
+              onClick={() => openTarget({ tab: "context", id: binding.projection_id })}>Open Context Projection</button>}
             {detail.can_cancel && methods.includes("session.cancel") && (
               <button type="button" disabled={busy} onClick={() => void actOnSession(detail, false)}>Cancel session</button>
             )}
@@ -263,6 +275,7 @@ export function Agents({ root, methods, providers }: {
           {methods.includes("switch.status") && methods.includes("switch.execute") && (
             <ProviderSwitch key={detail.session_id + ":" + detail.run_generation}
               root={root} source={detail} providers={providers} disabled={busy}
+              openTarget={openTarget} canOpenProjection={methods.includes("context.get")} canOpenHandoff={methods.includes("handoff.get")}
               onSession={(sessionId) => void run(async () => {
                 await select(await bridge.sessionGet(root, sessionId));
                 await loadSessions(0);

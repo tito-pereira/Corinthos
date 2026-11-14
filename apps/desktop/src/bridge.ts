@@ -89,7 +89,7 @@ export type ImportResult = {
   error: string | null;
 };
 
-interface ContractReference {
+export interface ContractReference {
   contract_id: string;
   revision_id: string;
 }
@@ -102,6 +102,7 @@ export interface WorkItem {
   status: string;
   updated_at: string;
   allowed_transitions: string[];
+  acceptance_criteria?: string[];
 }
 
 export interface WorkNode extends Omit<WorkItem, "updated_at" | "allowed_transitions"> {
@@ -129,6 +130,7 @@ export interface FlowView extends ScopeAssessment {
   next_actions: string[];
   validation_state: string;
   validation_policy: string | null;
+  validation_result_refs?: ContractReference[];
   workflow_ref: ContractReference | null;
   execution: { execution_id: string; state: string } | null;
   latest_session: { session_id: string; provider: string; state: string; run_generation: number } | null;
@@ -146,6 +148,99 @@ export interface WorkReport {
   objective: string;
   acceptance_criteria: string[];
   overall_status: string;
+}
+
+export type ProjectTab = "overview" | "work" | "agents" | "context" | "validation";
+
+export interface ProjectTarget {
+  tab: ProjectTab;
+  id?: string;
+  handoff?: boolean;
+  review?: "PROJECT" | "WORKFLOW";
+}
+
+export interface CommandSession {
+  project_id: string;
+  session_id: string;
+  work_item_id: string;
+  provider: string;
+  state: string;
+  run_generation: number;
+  cleanup_unconfirmed: boolean;
+  context_projection_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_tokens: number | null;
+  reported_cost: string | null;
+  reported_cost_currency: string | null;
+}
+
+export interface CommandFocus {
+  project_id: string;
+  work_item_id: string;
+  objective: string;
+  status: string;
+  scope_level: string;
+  stage: string | null;
+  blockers: string[];
+  next_actions: string[];
+  validation_state: string;
+  validation_result_refs: ContractReference[];
+  latest_session: { session_id: string; provider: string; state: string } | null;
+  latest_projection: { projection_id: string; projection_digest: string } | null;
+  provider_continuity: FlowView["provider_continuity"];
+}
+
+export interface CommandAttention {
+  kind: string;
+  severity: "INFO" | "ACTION" | "BLOCKED";
+  owner_type: string;
+  owner_id: string | null;
+  reason_code: string;
+  summary: string;
+  navigation: "OVERVIEW" | "WORK" | "AGENTS" | "CONTEXT" | "VALIDATION";
+  action_ids: string[];
+}
+
+export interface CommandValidation {
+  state: "NOT_VERIFIED" | "VERIFIED" | "BLOCKED";
+  latest_run: { run_id: string; state: string; plan: ContractReference; result: ContractReference | null; plan_is_active: boolean } | null;
+  active_plan_refs: ContractReference[];
+  outcome: string | null;
+}
+
+export interface CommandProjectCard extends ProjectEntry {
+  project_id: string | null;
+  error: string | null;
+  active_project: ContractReference | null;
+  active_workflow: ContractReference | null;
+  import_status: "IMPORTED" | "INCOMPLETE" | "INVALID" | null;
+  external_import: { snapshot_digest: string; summary: { object_format?: string; branch?: string | null; tracked_count?: number } } | null;
+  work_counts: ProjectSummary["work_items"];
+  focus_work_items: CommandFocus[];
+  sessions: { active: CommandSession | null; latest_terminal: CommandSession | null; total: number } | null;
+  validation: CommandValidation;
+  latest_context: { projection_id: string; projection_digest: string; work_item_id: string; provider: string } | null;
+  lifecycle: { tracker_id: string; enabled: boolean; active_build_id: string | null; pending_build_id: string | null } | null;
+  attention: CommandAttention[];
+}
+
+export interface ReviewSummary {
+  kind: "PROJECT" | "WORKFLOW";
+  session_id: string;
+  project_id: string;
+  state: string;
+  version: number;
+  digest: string | null;
+  expires_at: number | null;
+}
+
+export interface ReviewDetails {
+  review: ReviewSummary;
+  presentation: string | null;
+  approve_command: string | null;
+  can_defer: boolean;
+  redactions: string[];
 }
 
 interface WorkInput {
@@ -277,6 +372,23 @@ export const bridge = {
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
   project: (root: string, open: boolean) =>
     request<ProjectSummary>(open ? "project.open" : "project.summary", { root }),
+  commandOverview: (offset: number) =>
+    request<{ projects: CommandProjectCard[]; next_offset: number | null }>("command.overview", { offset }),
+  commandProject: (root: string) => request<CommandProjectCard>("command.project", { root }),
+  reviews: (root: string, offset: number) =>
+    request<{ reviews: ReviewSummary[]; next_offset: number | null }>("review.list", { root, offset }),
+  reviewGet: (root: string, kind: ReviewSummary["kind"], session_id: string) =>
+    request<ReviewDetails>("review.get", { root, kind, session_id }),
+  reviewDefer: (root: string, review: ReviewSummary & { digest: string }) =>
+    request<ReviewSummary>("review.defer", {
+      root, kind: review.kind, session_id: review.session_id, version: review.version, digest: review.digest,
+    }),
+  settingsProviders: (root?: string) => request<ProviderStatus[]>("settings.providers", root ? { root } : {}),
+  providersRefresh: () => request<ProviderStatus[]>("providers.refresh", {}),
+  providerConfigure: (provider: string, executable: string, root?: string) =>
+    request<ProviderStatus[]>("provider.configure", { provider, executable, ...(root ? { root } : {}) }),
+  providerReset: (provider: string, root?: string) =>
+    request<ProviderStatus[]>("provider.reset", { provider, ...(root ? { root } : {}) }),
   importInspect: (root: string) => request<ImportDiscovery>("import.inspect", { root }),
   importStatus: (root: string) => request<ImportResult>("import.status", { root }),
   importCommit: (root: string, discovery_digest: string, confirmations: string[]) =>
