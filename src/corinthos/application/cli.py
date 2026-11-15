@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from corinthos.application import project_status, providers_status, version, workspace
+from corinthos.context.redaction import sanitize_text
 from corinthos.contracts import ContractError
 
 
@@ -160,7 +161,7 @@ def _workspace(arguments) -> int:
         print("The requested local project state is unavailable or has changed.", file=sys.stderr)
         return 1
     except ValueError as error:
-        print(json.dumps({"error": str(error)}, ensure_ascii=True), file=sys.stderr)
+        print(json.dumps({"error": sanitize_text(str(error))}, ensure_ascii=True), file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2))
     return 0

@@ -49,10 +49,11 @@ function Receive-Artifact($Uri, [long] $Bytes, [string] $Destination, [int] $Sta
     }
 }
 
-function Get-PinnedArtifact($Pin, [string] $ExpectedHost, [string] $Cache, [string] $Work, [int] $Start, [int] $End) {
+function Get-PinnedArtifact($Pin, [string] $ExpectedHost, [string] $Cache, [string] $Work, [int] $Start, [int] $End, [long] $MaxBytes = 64MB) {
     $uri = [Uri] $Pin.url
-    if ($Pin.filename -cnotmatch '^[a-zA-Z0-9_.-]+\.(zip|whl)$' -or
-        $Pin.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $Pin.bytes -lt 1 -or $Pin.bytes -gt 64MB -or
+    $extensions = if ($MaxBytes -gt 64MB) { 'zip|whl|tgz|tar\.xz' } else { 'zip|whl' }
+    if ($MaxBytes -gt 128MB -or $Pin.filename -cnotmatch "^[a-zA-Z0-9_.-]+\.($extensions)$" -or
+        $Pin.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $Pin.bytes -lt 1 -or $Pin.bytes -gt $MaxBytes -or
         $uri.Scheme -cne 'https' -or $uri.Host -cne $ExpectedHost -or
         !$uri.IsDefaultPort -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
         [IO.Path]::GetFileName($uri.AbsolutePath) -cne $Pin.filename) {
@@ -77,7 +78,13 @@ function Get-PinnedArtifact($Pin, [string] $ExpectedHost, [string] $Cache, [stri
         if ($usingCache) { throw "Cached artifact SHA-256 verification failed. Remove $cached and retry." }
         throw "SHA-256 verification failed for $($Pin.filename). Retry from a trusted checkout."
     }
-    if (!$usingCache) { [IO.File]::Copy($artifact, $cached) }
+    if (!$usingCache) {
+        $pending = Join-Path $Cache ('.download-' + [guid]::NewGuid().ToString('N') + '.tmp')
+        try {
+            [IO.File]::Copy($artifact, $pending)
+            [IO.File]::Move($pending, $cached)
+        } finally { [IO.File]::Delete($pending) }
+    }
     return $artifact
 }
 
@@ -103,7 +110,7 @@ function Get-LauncherCompiler {
     return $compiler
 }
 
-function New-InstallCandidate([string] $Source, $Paths, [string] $Work, [string] $Compiler) {
+function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [string] $Compiler) {
     if (!('System.IO.Compression.ZipFile' -as [type])) {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
     }
@@ -141,12 +148,23 @@ function New-InstallCandidate([string] $Source, $Paths, [string] $Work, [string]
     [IO.File]::Copy((Join-Path $Source 'LICENSE'), (Join-Path $candidate 'resources\LICENSE'))
     [IO.File]::Copy((Join-Path $Source 'uninstall.ps1'), (Join-Path $candidate 'uninstall.ps1'))
     [IO.File]::Copy((Join-Path $Source 'platform\windows\common.ps1'), (Join-Path $candidate 'platform\windows\common.ps1'))
-    Show-InstallProgress 75 'Corinthos application and launcher staged'
+    return $candidate
+}
+
+function New-InstallCandidate([string] $Source, $Paths, [string] $Work, [string] $Compiler) {
+    $desktop = New-CorinthosDesktopBuild -Source $Source -Paths $Paths -Work $Work
+    $candidate = New-PrivateRuntimeCandidate $desktop.SourceSnapshot $Paths $Work $Compiler
+    Assert-PlainPath $desktop.Executable
+    [IO.File]::Copy($desktop.Executable, (Join-Path $candidate 'bin\corinthos-desktop.exe'))
+    [IO.File]::Copy($desktop.ManifestPath, (Join-Path $candidate 'resources\toolchain-artifacts.json'))
+    Write-CorinthosReleaseRecord $desktop.SourceSnapshot $candidate $desktop.Provenance
+    Show-InstallProgress 75 'Corinthos desktop and command staged'
     return $candidate
 }
 
 function Invoke-PrivatePython([string] $Install, [string[]] $Arguments) {
     $python = Join-Path $Install 'runtime\python.exe'
+    Assert-PlainPath $python
     & $python -I -B -X utf8 @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Private Python check failed (exit $LASTEXITCODE): $($Arguments[0])." }
 }
@@ -171,6 +189,21 @@ Draft202012Validator.check_schema({'type': 'object'})
 print(corinthos.__version__)
 '@
     return Invoke-PrivatePython $Install @('-c', $probe)
+}
+
+function Test-DesktopCandidate([string] $Install) {
+    Test-CorinthosReleaseRecord $Install
+    $desktop = Join-Path $Install 'bin\corinthos-desktop.exe'
+    Assert-PlainPath $desktop
+    $process = Start-Process -FilePath $desktop -ArgumentList '--installation-check' -WorkingDirectory (Split-Path -Parent $desktop) -WindowStyle Hidden -PassThru
+    try {
+        if (!$process.WaitForExit(30000)) {
+            $process.Kill()
+            [void] $process.WaitForExit(5000)
+            throw 'The staged desktop did not complete the private-runtime health check.'
+        }
+        if ($process.ExitCode -ne 0) { throw 'The desktop could not verify its private-runtime sidecar.' }
+    } finally { $process.Dispose() }
 }
 
 function Write-InstallManifest([string] $Install, [string] $State, [string] $Version, [string] $Work) {

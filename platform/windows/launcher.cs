@@ -12,49 +12,31 @@ internal static class Launcher
     {
         string directory = AppDomain.CurrentDomain.BaseDirectory;
         string desktop = Path.Combine(directory, "corinthos-desktop.exe");
-        if (args.Length == 0 && File.Exists(desktop))
+        try
         {
-            try
+            if (args.Length == 0 && File.Exists(desktop))
             {
-                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||
-                    (File.GetAttributes(desktop) & FileAttributes.ReparsePoint) != 0)
-                {
-                    Console.Error.WriteLine("Corinthos desktop must be an ordinary installed executable.");
-                    return 1;
-                }
+                RequireOrdinary(desktop);
                 using (Process child = Process.Start(new ProcessStartInfo(desktop)
                 {
                     WorkingDirectory = directory,
-                    UseShellExecute = false
+                    // Desktop startup has its own lifetime even when the launcher is piped.
+                    UseShellExecute = true
                 }))
                 {
                     return 0;
                 }
             }
-            catch (Exception error)
+            string executable = Path.GetFullPath(Path.Combine(directory, "..", "runtime", "python.exe"));
+            RequireOrdinary(executable);
+            var arguments = new StringBuilder("-I -B -X utf8 -m corinthos");
+            foreach (string arg in args)
             {
-                if (!(error is Win32Exception || error is IOException ||
-                      error is UnauthorizedAccessException))
-                    throw;
-                Console.Error.WriteLine("Corinthos could not start the installed desktop. " + error.Message);
-                return 1;
+                arguments.Append(' ');
+                AppendQuoted(arguments, arg);
             }
-        }
-        string executable = Path.GetFullPath(Path.Combine(
-            directory, "..", "runtime", "python.exe"));
-        var arguments = new StringBuilder("-I -B -X utf8 -m corinthos");
-        foreach (string arg in args)
-        {
-            arguments.Append(' ');
-            AppendQuoted(arguments, arg);
-        }
 
-        var start = new ProcessStartInfo(executable, arguments.ToString())
-        {
-            UseShellExecute = false
-        };
-        try
-        {
+            var start = new ProcessStartInfo(executable, arguments.ToString()) { UseShellExecute = false };
             // The child shares this console and handles its own interrupt.
             Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs signal)
             {
@@ -66,11 +48,23 @@ internal static class Launcher
                 return child.ExitCode;
             }
         }
-        catch (Win32Exception error)
+        catch (Exception error)
         {
-            Console.Error.WriteLine("Corinthos could not start its private runtime. " + error.Message);
+            if (!(error is Win32Exception || error is IOException || error is UnauthorizedAccessException))
+                throw;
+            Console.Error.WriteLine("Corinthos could not start its installed executable. Check the installation or rerun setup.");
             return 1;
         }
+    }
+
+    private static void RequireOrdinary(string executable)
+    {
+        var file = File.GetAttributes(executable);
+        if ((file & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+            throw new IOException("Invalid installed executable.");
+        for (var parent = new FileInfo(executable).Directory; parent != null; parent = parent.Parent)
+            if ((parent.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Invalid installed directory.");
     }
 
     private static void AppendQuoted(StringBuilder target, string value)

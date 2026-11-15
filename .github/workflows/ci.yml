@@ -198,9 +198,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           deactivate
   source-install:
-    name: Verify Windows source installation (CPython 3.14.10 embeddable)
+    name: Verify installed Windows product and release candidate
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
         with:
@@ -209,9 +209,32 @@ jobs:
       - name: Record tested commit
         shell: pwsh
         run: git rev-parse HEAD
-      - name: Install, exercise, reinstall and uninstall in a disposable user scope
+      - name: Fetch the verified Phase 8 installer baseline
+        shell: pwsh
+        run: git fetch --no-tags origin 4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23
+      - name: Verify the hosted runner's Windows build prerequisites
         shell: powershell
+        run: |
+          . .\platform\windows\common.ps1
+          . .\platform\windows\toolchain.ps1
+          $msvc = Find-CorinthosMsvc
+          $sdk = Get-WindowsSdkBuild
+          $webview = Get-CorinthosWebView2
+          if (!$msvc -or !$sdk -or !$webview) {
+            throw "Hosted runner prerequisite missing (MSVC: $([bool]$msvc), SDK: $([bool]$sdk), WebView2: $([bool]$webview))."
+          }
+          Write-Host "MSVC $($msvc.Version), Windows SDK $($sdk.Version), WebView2 $webview"
+      - name: Build, exercise, reinstall and uninstall the installed product
+        shell: powershell
+        env:
+          CORINTHOS_CI_ARTIFACTS: ${{ runner.temp }}/corinthos-release-candidate
         run: .\platform\windows\test-install.ps1
+      - name: Upload tested Windows release candidate evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: corinthos-windows-x64-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/corinthos-release-candidate
+          if-no-files-found: error
   desktop:
     name: Verify Windows desktop Projects, Agents and Context
     runs-on: windows-latest
@@ -227,7 +250,7 @@ jobs:
       - name: Record tested commit
         run: git rev-parse HEAD
       - name: Fetch exact v8 desktop fixture sources
-        run: git fetch --no-tags origin 13e7bf556788e737493d767b30e12a6613c8fa73
+        run: git fetch --no-tags origin 13e7bf556788e737493d767b30e12a6613c8fa73 4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23
       - uses: actions/setup-node@v7
         with:
           node-version: '24.22.2'

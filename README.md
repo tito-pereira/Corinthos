@@ -7,7 +7,8 @@ different agents, initially Codex and Claude Code.
 
 ## Install on Windows
 
-In PowerShell on Windows x64, clone the repository and run the installer.
+In 64-bit PowerShell 5.1 or later on Windows x64, clone the repository with
+Git for Windows and run the installer from a clean checkout.
 
 ```powershell
 git clone https://github.com/tito-pereira/Corinthos.git
@@ -21,26 +22,26 @@ After the installer reports 100%, open a new terminal in any directory.
 corinthos
 ```
 
-Home lets you create or open a project, resume a recent project, and inspect
-providers and settings. Use `corinthos .` to open the project in the current
-directory. Scriptable commands such as `corinthos init .` and `corinthos project
+The desktop Home lets you create or open a project, resume a recent project,
+and inspect providers and settings. Use `corinthos .` for the terminal
+project entry point. Scriptable commands such as `corinthos init .` and `corinthos project
 --root . start` also work. Providers are optional. Installation and reinstall
 leave provider settings and observations untouched and run no provider CLIs.
-Choose **Providers → Refresh** in Home or run `corinthos adapters refresh` to
+Choose **Settings > Providers > Refresh** or run `corinthos adapters refresh` to
 request capability checks explicitly.
 
-Installation uses the current account and owns its private CPython 3.14.10
-embeddable runtime, packaged application resources and pinned dependencies.
-It verifies the runtime and dependency downloads against the
-[artifact manifest](platform/windows/artifacts.json). The Windows .NET Framework
-compiler builds the small console launcher locally. The installer checks the
-private runtime and installed command before reporting success. Uncached
-artifacts require network access. The installed command runs independently of
-any system Python or checkout location.
+Setup builds the desktop and console launcher locally, stages the private
+CPython 3.14.10 runtime and verifies both entry points before promotion.
+Downloads are verified against the [runtime pins](platform/windows/artifacts.json)
+and [build tool pins](platform/windows/toolchain-artifacts.json). Uncached
+downloads require network access. If needed, setup verifies and runs official
+Microsoft installers for the Visual C++ x64 tools, Windows SDK and WebView2.
+Microsoft build tools may prompt for UAC. Corinthos installs for the current
+account and runs independently of a system Python or the checkout location.
 
 | Location | Contents |
 | --- | --- |
-| `%LOCALAPPDATA%\Programs\Corinthos` | Launcher in `bin`, private runtime, application and immutable resources. |
+| `%LOCALAPPDATA%\Programs\Corinthos` | Desktop and CLI in `bin`, private runtime, resources, release manifest and checksums. |
 | `%LOCALAPPDATA%\Corinthos` | Versioned settings, provider registry and up to 20 recent project references, plus logs and cached downloads. |
 | `<project>\.corinthos` | Authoritative state for that project. |
 
@@ -63,6 +64,9 @@ after uninstall to pick up the PATH change.
 
 Windows is the supported platform for this source installer. The contributor
 workflow below remains available on Windows and Ubuntu.
+See the [release notes](docs/v0.1/release-notes.md) and
+[release verification guide](docs/v0.1/release-hardening.md) for build details,
+provenance and signing status.
 
 ## About Corinthos
 

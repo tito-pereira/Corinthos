@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from corinthos.context.redaction import sanitize_text
 from corinthos.contracts import ContractError
 
 
@@ -59,7 +60,7 @@ def _run(arguments):
         print("The requested local session operation is unavailable.", file=sys.stderr)
         return 1
     except ValueError as error:
-        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        print(json.dumps({"error": sanitize_text(str(error))}), file=sys.stderr)
         return 1
     finally:
         app.supervisor.close()

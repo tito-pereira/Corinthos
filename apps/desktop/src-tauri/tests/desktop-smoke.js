@@ -419,6 +419,40 @@
       );
     });
     if (!backendReady) return report("fail [backend]");
+    if (mode === "passive") {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      const rejects = async (command, params, message) => {
+        try {
+          await invoke(command, params);
+          return false;
+        } catch (error) {
+          return message.test(String(error));
+        }
+      };
+      const summary = { method: "project.summary", params: { root: projectRoot } };
+      const traversal = { method: "project.summary", params: { root: projectRoot + "\\..\\outside" } };
+      if (!invoke || window.__TAURI__ || !["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"].includes(
+        location.protocol + "//" + location.hostname,
+      ) || !(await rejects("plugin:window|title", { label: "main" }, /not allowed|denied/i)) ||
+        !(await rejects("workspace_request", { method: "corinthos.unlisted", params: {} }, /workspace operation is unavailable/)) ||
+        !(await rejects("workspace_request", traversal, /absolute local project directory/))) {
+        return report("fail [ipc-policy]");
+      }
+      const deadline = performance.now() + 5_000;
+      let after;
+      while (performance.now() < deadline) {
+        try {
+          after = await invoke("workspace_request", summary);
+          break;
+        } catch (error) {
+          // The observer bypasses the frontend's queue while Home reads the registry.
+          if (String(error) !== "The sidecar is busy. Retry the request.") return report("fail [ipc-summary]");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      if (!after?.initialized || typeof after.root !== "string" ||
+        normalizeWindowsPath(after.root) !== normalizeWindowsPath(projectRoot)) return report("fail [ipc-summary]");
+    }
     if (mode.startsWith("command-")) return verifyCommand();
     if (mode.startsWith("import-")) return verifyImport();
     if (mode === "adaptive" || mode === "adaptive-passive") return verifyAdaptive();
@@ -433,7 +467,8 @@
         (row) => text(row.querySelector("h3")) === "missing-project",
       );
       return text(projectRow()?.querySelector(".section-heading span")) === (startSessions ? "Current · v9" : "Older schema · v8") &&
-        text(missing?.querySelector(".section-heading span")) === "Missing";
+        text(missing?.querySelector(".section-heading span")) === "Missing" &&
+        projectRow()?.querySelector("button")?.matches(":enabled");
     });
     if (!legacyRegistry) return report("fail [registry]");
     projectRow().querySelector("button").click();
@@ -502,6 +537,7 @@
     });
     if (!passive) return report("fail [agents]");
     const legacySession = document.querySelector(".session-list li[data-state=SUCCEEDED] button");
+    if (!legacySession?.matches(":enabled")) return report("fail [binding]");
     legacySession.click();
     if (!(await waitFor(() => valueFor(document.querySelector(".session-detail"), "State") === "SUCCEEDED")) ||
         document.querySelector(".session-projection")) return report("fail [binding]");

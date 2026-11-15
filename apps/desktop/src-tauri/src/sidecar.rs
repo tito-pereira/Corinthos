@@ -73,11 +73,27 @@ pub struct Sidecar {
 
 impl Sidecar {
     pub fn start(events: EventSink) -> Result<(Self, Handshake)> {
+        Self::start_with(&resolve_python()?, events)
+    }
+
+    fn start_with(executable: &Path, events: EventSink) -> Result<(Self, Handshake)> {
         Self::launch(
-            python_command(&resolve_python()?, &["-m", "corinthos.application.sidecar"]),
+            python_command(executable, &["-m", "corinthos.application.sidecar"]),
             events,
             HANDSHAKE_TIMEOUT,
         )
+    }
+
+    /// Check the exact installed peer without opening a window or probing a provider.
+    pub fn check_installation() -> Result<()> {
+        let executable = env::current_exe().map_err(|_| INSTALLATION_UNAVAILABLE)?;
+        let python = installed_python(&executable)?;
+        let (mut sidecar, handshake) = Self::start_with(&python, Arc::new(|_| {}))?;
+        let expected = env!("CARGO_PKG_VERSION");
+        if handshake.version != expected || sidecar.version()? != json!({"version": expected}) {
+            return Err("The installed Corinthos desktop and backend versions differ.");
+        }
+        sidecar.shutdown_gracefully()
     }
 
     fn launch(
@@ -197,18 +213,24 @@ impl Sidecar {
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
+        self.shutdown_gracefully().or_else(|_| self.terminate())
+    }
+
+    fn shutdown_gracefully(&mut self) -> Result<()> {
         self.closing.store(true, Ordering::Release);
         let deadline = Instant::now() + self.shutdown_timeout;
-        if self.is_running()
-            && let Ok(id) = self.send("system.shutdown", json!({}))
-        {
-            let _ = self.receive_response(id, deadline);
+        let id = self.send("system.shutdown", json!({}))?;
+        if self.receive_response(id, deadline)? != json!({"stopping": true}) {
+            return Err("The Corinthos sidecar did not confirm shutdown.");
         }
         self.requests.take();
         while self.is_running() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(15));
         }
-        self.terminate()
+        match self.child.try_wait() {
+            Ok(Some(status)) if status.success() => Ok(()),
+            _ => Err("The Corinthos sidecar did not exit cleanly."),
+        }
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value> {
@@ -378,34 +400,86 @@ fn python_command(executable: &Path, arguments: &[&str]) -> Command {
     command
 }
 
+const INSTALLATION_UNAVAILABLE: &str = "The private Corinthos runtime is unavailable.";
+
 fn resolve_python() -> Result<PathBuf> {
+    #[cfg(any(debug_assertions, feature = "desktop-smoke"))]
     if let Some(executable) = env::var_os("CORINTHOS_SIDECAR_PYTHON") {
         let path = PathBuf::from(executable);
-        if valid_override(&path) {
+        if ordinary_executable(&path) {
             return Ok(path);
         }
         return Err("The contributor Python override must be an existing absolute executable.");
     }
-    #[cfg(windows)]
+    if let Ok(executable) = env::current_exe()
+        && executable
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "bin")
+    {
+        return installed_python(&executable);
+    }
+    #[cfg(all(windows, any(test, debug_assertions, feature = "desktop-smoke")))]
     {
         let path = PathBuf::from(
-            env::var_os("LOCALAPPDATA").ok_or("The private Corinthos runtime is unavailable.")?,
+            env::var_os("LOCALAPPDATA").ok_or(INSTALLATION_UNAVAILABLE)?,
         )
         .join("Programs")
         .join("Corinthos")
         .join("runtime")
         .join("python.exe");
-        if valid_override(&path) && !has_windows_reparse_point(&path) {
+        if ordinary_executable(&path) {
             return Ok(path);
         }
-        Err("The private Corinthos runtime is unavailable.")
     }
-    #[cfg(not(windows))]
-    Err("Set CORINTHOS_SIDECAR_PYTHON to an installed contributor Python runtime.")
+    Err(INSTALLATION_UNAVAILABLE)
 }
 
-fn valid_override(path: &Path) -> bool {
-    if !path.is_absolute() || !path.is_file() {
+fn installed_python(executable: &Path) -> Result<PathBuf> {
+    let directory = executable.parent().ok_or(INSTALLATION_UNAVAILABLE)?;
+    if directory.file_name().is_none_or(|name| name != "bin")
+        || executable.file_name().is_none_or(|name| name != "corinthos-desktop.exe")
+        || !ordinary_executable(executable)
+    {
+        return Err(INSTALLATION_UNAVAILABLE);
+    }
+    let root = directory.parent().ok_or(INSTALLATION_UNAVAILABLE)?;
+    let runtime = root.join("runtime");
+    let python = runtime.join("python.exe");
+    if !ordinary_executable(&python) {
+        return Err(INSTALLATION_UNAVAILABLE);
+    }
+    #[cfg(windows)]
+    {
+        if ["python314.dll", "python314.zip", "python314._pth"]
+            .iter()
+            .map(|name| runtime.join(name))
+            .any(|path| !path.is_file() || has_windows_reparse_point(&path))
+            || !root.join("app").is_dir()
+            || has_windows_reparse_point(&root.join("app"))
+        {
+            return Err(INSTALLATION_UNAVAILABLE);
+        }
+        use std::io::Read;
+        let mut paths = String::new();
+        if std::fs::File::open(runtime.join("python314._pth"))
+            .and_then(|file| file.take(128).read_to_string(&mut paths))
+            .is_err()
+            || !matches!(paths.as_str(), "python314.zip\r\n.\r\n..\\app\r\n" | "python314.zip\n.\n..\\app\n")
+        {
+            return Err(INSTALLATION_UNAVAILABLE);
+        }
+    }
+    Ok(python)
+}
+
+fn ordinary_executable(path: &Path) -> bool {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        || !path.is_file()
+    {
         return false;
     }
     #[cfg(windows)]
@@ -415,12 +489,17 @@ fn valid_override(path: &Path) -> bool {
             || !path
                 .extension()
                 .is_some_and(|value| value.eq_ignore_ascii_case("exe"))
-            || path
-                .components()
-                .any(|part| matches!(part, Component::ParentDir))
+            || has_windows_reparse_point(path)
         {
             return false;
         }
+    }
+    #[cfg(not(windows))]
+    if path
+        .ancestors()
+        .any(|part| part.symlink_metadata().map_or(true, |meta| meta.is_symlink()))
+    {
+        return false;
     }
     true
 }
