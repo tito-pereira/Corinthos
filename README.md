@@ -237,13 +237,26 @@ for commands, precedence and verification limits.
 
 ## Create your first project specification
 
-In the directory you want to use for the project, choose **Create new project**
-from Home or run the scriptable commands.
+On desktop Home, choose **Create new project**, enter a display name and an
+absolute local project directory, then choose **Create project**. Existing
+ordinary files and root instruction files are preserved. The project opens after
+private initialization and registration. Names appear in Home, Projects and
+Command, including after restarting the application.
+
+Choose **Continue with Project Manager** for the supported terminal authoring
+command. GUI draft authoring is currently unavailable. To initialize from the
+terminal and start authoring directly, use:
 
 ```powershell
 corinthos init .
 corinthos project --root . start
 ```
+
+If registration is incomplete or a connection drops during creation, reconnect
+and explicitly retry the same name and directory. A different name conflicts
+with the saved creation intent. The desktop keeps recoverable form values and
+never automatically repeats a creation request. See the
+[creation and recovery boundary](docs/v0.1/phase-2-projects.md#named-private-project-creation).
 
 You can select another existing project directory with `--root`. Corinthos
 saves accepted answers privately beneath that directory.

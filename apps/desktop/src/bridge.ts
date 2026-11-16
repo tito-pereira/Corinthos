@@ -352,6 +352,24 @@ export interface SwitchView {
 
 let pending: Promise<unknown> = Promise.resolve();
 
+const creationMessages = {
+  INVALID_INPUT: "Check the project name and absolute local directory.",
+  CONFLICT: "Project creation conflicts with existing state or a different project name.",
+  ACCESS_DENIED: "Corinthos cannot access the selected directory. Check its permissions.",
+  REGISTRY_INCOMPLETE: "The project was initialized, but registration did not finish. Retry with the same name and directory.",
+  STATE_UNAVAILABLE: "The project state could not be verified. Preserve it and inspect the selected directory.",
+  UNCONFIRMED: "Project creation could not be confirmed. Reconnect, inspect the directory, and retry with the same name and location.",
+};
+
+export type ProjectCreationCode = keyof typeof creationMessages;
+
+export class ProjectCreationError extends Error {
+  constructor(readonly creationCode: ProjectCreationCode) {
+    super(creationMessages[creationCode]);
+    this.name = "ProjectCreationError";
+  }
+}
+
 function request<T>(method: string, params: object) {
   const reply = pending.then(() => invoke<T>("workspace_request", { method, params }));
   pending = reply.catch(() => undefined);
@@ -372,6 +390,16 @@ export const bridge = {
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
   project: (root: string, open: boolean) =>
     request<ProjectSummary>(open ? "project.open" : "project.summary", { root }),
+  createProject: async (root: string, displayName: string): Promise<ProjectSummary> => {
+    try {
+      return await request<ProjectSummary>("project.create", { root, display_name: displayName });
+    } catch (error) {
+      const code = typeof error === "string" && error.startsWith("PROJECT_CREATE_")
+        ? error.slice("PROJECT_CREATE_".length) : "UNCONFIRMED";
+      throw new ProjectCreationError(Object.hasOwn(creationMessages, code)
+        ? code as ProjectCreationCode : "UNCONFIRMED");
+    }
+  },
   commandOverview: (offset: number) =>
     request<{ projects: CommandProjectCard[]; next_offset: number | null }>("command.overview", { offset }),
   commandProject: (root: string) => request<CommandProjectCard>("command.project", { root }),

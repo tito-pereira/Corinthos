@@ -33,6 +33,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
         return Err(invalid_fixture());
     }
     let mode = match env::var("CORINTHOS_DESKTOP_SMOKE_START").as_deref() {
+        Ok("create") => "create",
         Ok("adaptive") => "adaptive",
         Ok("adaptive-passive") => "adaptive-passive",
         Ok("import-preview") => "import-preview",
@@ -59,7 +60,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 let _ = window.eval(&script);
             }
         })
-        .on_document_title_changed(move |_window, title| {
+        .on_document_title_changed(move |window, title| {
             if !can_report.load(Ordering::Acquire) {
                 return;
             }
@@ -70,6 +71,10 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 "Corinthos desktop smoke: fail [ipc-summary]" => "fail [ipc-summary]\n",
                 "Corinthos desktop smoke: fail [registry]" => "fail [registry]\n",
                 "Corinthos desktop smoke: fail [project]" => "fail [project]\n",
+                "Corinthos desktop smoke: fail [create-form]" => "fail [create-form]\n",
+                "Corinthos desktop smoke: fail [create-result]" => "fail [create-result]\n",
+                "Corinthos desktop smoke: fail [create-registry]" => "fail [create-registry]\n",
+                "Corinthos desktop smoke: fail [create-command]" => "fail [create-command]\n",
                 "Corinthos desktop smoke: fail [agents]" => "fail [agents]\n",
                 "Corinthos desktop smoke: fail [context]" => "fail [context]\n",
                 "Corinthos desktop smoke: fail [verify]" => "fail [verify]\n",
@@ -116,6 +121,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
                 .open(&receipt)
             {
                 let _ = file.write_all(outcome.as_bytes());
+            }
+            if mode == "create" {
+                let _ = window.close();
             }
         }))
 }

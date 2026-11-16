@@ -1,5 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.corinthos.local/rpc/v2/response.schema.json",
-  "$ref": "https://schemas.corinthos.local/rpc/v1/response.schema.json"
+  "oneOf": [
+    { "$ref": "https://schemas.corinthos.local/rpc/v1/response.schema.json#/oneOf/0" },
+    {
+      "type": "object",
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "$ref": "https://schemas.corinthos.local/rpc/v1/response.schema.json#/oneOf/1/properties/id"
+        },
+        "error": { "$ref": "error.schema.json" }
+      },
+      "required": ["jsonrpc", "id", "error"],
+      "additionalProperties": false
+    }
+  ]
 }

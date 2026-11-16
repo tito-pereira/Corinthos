@@ -79,7 +79,7 @@ def test_v1_recents_upgrade_on_explicit_access_and_keep_missing_projects(user, t
     recorded = registry.remember(other)
     assert recorded.availability == "AVAILABLE"
     assert json.loads(path.read_text("utf-8")) == {
-        "version": 2,
+        "version": 3,
         "projects": [
             {"root": str(other), "last_accessed_at": recorded.last_accessed_at},
             {"root": str(missing), "last_accessed_at": _ACCESS},
@@ -94,7 +94,7 @@ def test_v1_recents_upgrade_on_explicit_access_and_keep_missing_projects(user, t
     assert not missing.exists() and path.read_bytes() == migrated
 
 
-_UNSUPPORTED_VERSIONS = [-1, 0, 3, 99, True, 2.0, "2", None]
+_UNSUPPORTED_VERSIONS = [-1, 0, 4, 99, True, 2.0, "2", None]
 
 
 @pytest.mark.parametrize("version", _UNSUPPORTED_VERSIONS)

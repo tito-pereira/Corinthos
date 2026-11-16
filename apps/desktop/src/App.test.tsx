@@ -201,6 +201,205 @@ describe("desktop Home and Projects", () => {
   });
 });
 
+describe("desktop named project creation", () => {
+  const created = {
+    ...summary, root: "C:\\Projects\\Novo projeto", display_name: "Investigação clínica",
+    active_project: null, active_workflow: null, storage: "ABSENT" as const, schema_version: null,
+  };
+  const entry: ProjectEntry = { ...legacy, ...created, availability: "AVAILABLE" };
+  const card: CommandProjectCard = {
+    ...entry, project_id: null, error: null, active_project: null, active_workflow: null,
+    import_status: null, external_import: null, work_counts: null, focus_work_items: [],
+    sessions: null, validation: { state: "NOT_VERIFIED", latest_run: null, outcome: null, active_plan_refs: [] },
+    latest_context: null, lifecycle: null, attention: [],
+  };
+
+  function setup(create: () => Promise<ProjectSummary> = async () => created) {
+    let saved = false;
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return {
+        ...ready, handshake: { ...ready.handshake, methods: [...methods, "project.create", "command.overview", "command.project"] },
+      };
+      switch (payload.method) {
+        case "projects.list": return { projects: saved ? [entry] : [], next_offset: null };
+        case "project.create": {
+          const result = await create();
+          saved = true;
+          return result;
+        }
+        case "project.open":
+        case "project.summary": return created;
+        case "command.overview": return { projects: saved ? [card] : [], next_offset: null };
+        case "command.project": return card;
+        default: throw new Error("Unexpected method");
+      }
+    });
+  }
+
+  const creations = () => invoke.mock.calls.filter(([, payload]) => payload?.method === "project.create");
+
+  async function fillCreation() {
+    await click("Create new project");
+    await field("#project-name", created.display_name);
+    await field("#project-root", created.root);
+  }
+
+  it("validates fields and cancels before submitting without mutating or probing", async () => {
+    setup();
+    await render();
+    await click("Create new project");
+    await click("Create project");
+    expect(host.querySelector("#project-name")?.getAttribute("aria-invalid")).toBe("true");
+    expect(host.textContent).toContain("Enter a project name.");
+    await field("#project-name", created.display_name);
+    await field("#project-root", "relative/project");
+    await click("Create project");
+    expect(host.textContent).toContain("Enter an absolute local directory path.");
+    await click("Cancel creation");
+    expect(host.querySelector("#project-name")).toBeNull();
+    expect(creations()).toHaveLength(0);
+    expect(invoke.mock.calls.map(([, payload]) => payload?.method).filter(Boolean)).toEqual(["projects.list"]);
+  });
+
+  it("opens the returned summary and refreshes Home, Projects and Command using the saved name", async () => {
+    setup();
+    await render();
+    await fillCreation();
+    await click("Create project");
+    expect(creations()).toEqual([["workspace_request", {
+      method: "project.create", params: { root: created.root, display_name: created.display_name },
+    }]]);
+    expect(host.querySelector(".project-result h3")?.textContent).toBe(created.display_name);
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe("Projects");
+    expect(invoke.mock.calls.some(([, payload]) => payload?.method === "project.open")).toBe(false);
+    expect(host.textContent).not.toContain("GUI authoring is unavailable");
+    await click("Continue with Project Manager");
+    expect(host.textContent).toContain("GUI authoring is unavailable");
+    expect(host.textContent).toContain("corinthos project --root . start");
+    await click("Home");
+    expect(host.querySelector(".project-list h3")?.textContent).toBe(created.display_name);
+    await click("Command");
+    expect(host.querySelector(".command-card h3")?.textContent).toBe(created.display_name);
+    expect(invoke.mock.calls.some(([, payload]) => /^(providers\.|session\.start|flow\.start|review\.defer)/.test(payload?.method ?? ""))).toBe(false);
+    await act(async () => root.render(null));
+    await render();
+    expect(host.querySelector(".project-list h3")?.textContent).toBe(created.display_name);
+    await click(`Open ${created.display_name}`);
+    expect(host.querySelector(".project-result h3")?.textContent).toBe(created.display_name);
+    expect(creations()).toHaveLength(1);
+  });
+
+  it("counts supported Unicode code points and rejects unsupported name characters before dispatch", async () => {
+    setup();
+    await render();
+    await fillCreation();
+    await field("#project-name", "Hidden\u202ename");
+    await click("Create project");
+    expect(host.textContent).toContain("without control or unsupported characters");
+    await field("#project-name", "🏛".repeat(129));
+    await click("Create project");
+    expect(creations()).toHaveLength(0);
+    await field("#project-name", "🏛".repeat(128));
+    await click("Create project");
+    expect(creations()).toHaveLength(1);
+    expect(creations()[0][1].params.display_name).toBe("🏛".repeat(128));
+  });
+
+  it("blocks duplicate submission and keeps a late success from replacing navigation", async () => {
+    let finish: (value: ProjectSummary) => void = () => {};
+    setup(() => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await fillCreation();
+    await click("Create project");
+    expect(host.querySelector<HTMLInputElement>("#project-name")?.disabled).toBe(true);
+    await click("Create project");
+    expect(creations()).toHaveLength(1);
+    await click("Command");
+    await act(async () => finish(created));
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe("Command");
+    expect(host.querySelector(".project-result")).toBeNull();
+    expect(host.querySelector(".command-card h3")?.textContent).toBe(created.display_name);
+    await click("Home");
+    expect(host.textContent).toContain(`Created ${created.display_name}`);
+  });
+
+  it("retains inputs and requires an explicit retry after a lost response", async () => {
+    let attempts = 0;
+    setup(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("private transport details");
+      return created;
+    });
+    await render();
+    await fillCreation();
+    await click("Create project");
+    expect(host.textContent).toContain("Creation was not confirmed");
+    expect(host.textContent).not.toContain("private transport details");
+    expect(host.querySelector<HTMLInputElement>("#project-name")?.value).toBe(created.display_name);
+    expect(host.querySelector<HTMLInputElement>("#project-root")?.value).toBe(created.root);
+    expect(creations()).toHaveLength(1);
+    await click("Retry creation");
+    expect(creations()).toHaveLength(2);
+    expect(creations()[1]).toEqual(creations()[0]);
+    expect(host.querySelector(".project-result h3")?.textContent).toBe(created.display_name);
+  });
+
+  it.each([
+    ["INVALID_INPUT", "Check the project name and absolute local directory path"],
+    ["CONFLICT", "different creation name or conflicting state"],
+    ["ACCESS_DENIED", "Check its permissions"],
+    ["STATE_UNAVAILABLE", "Its contents were retained"],
+    ["REGISTRY_INCOMPLETE", "Private initialization completed"],
+  ])("offers actionable %s recovery without losing the draft", async (code, message) => {
+    setup(async () => { throw `PROJECT_CREATE_${code}`; });
+    await render();
+    await fillCreation();
+    await click("Create project");
+    expect(host.textContent).toContain(message);
+    expect(host.querySelector<HTMLInputElement>("#project-name")?.value).toBe(created.display_name);
+    expect(host.querySelector<HTMLInputElement>("#project-root")?.value).toBe(created.root);
+    expect(creations()).toHaveLength(1);
+    expect(host.textContent).toContain("Retry creation");
+    expect(host.querySelector(".project-result")).toBeNull();
+  });
+
+  it("preserves an uncertain creation across reconnect and ignores the old response", async () => {
+    let finish: (value: ProjectSummary) => void = () => {};
+    let attempts = 0;
+    setup(() => ++attempts === 1 ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve(created));
+    await render();
+    await fillCreation();
+    await click("Create project");
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    expect(host.textContent).toContain("Creation may have completed before disconnect");
+    expect(host.textContent).toContain(created.root);
+    await act(async () => finish(created));
+    expect(host.querySelector(".project-result")).toBeNull();
+    await click("Reconnect");
+    expect(host.querySelector<HTMLInputElement>("#project-name")?.value).toBe(created.display_name);
+    expect(host.querySelector<HTMLInputElement>("#project-root")?.value).toBe(created.root);
+    expect(creations()).toHaveLength(1);
+    await click("Retry creation");
+    expect(creations()).toHaveLength(2);
+    expect(host.querySelector(".project-result h3")?.textContent).toBe(created.display_name);
+  });
+
+  it("leaves an in-flight creation inspectable without claiming backend cancellation", async () => {
+    let finish: (value: ProjectSummary) => void = () => {};
+    setup(() => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await fillCreation();
+    await click("Create project");
+    await click("Leave creation");
+    expect(host.textContent).toContain("does not cancel backend initialization");
+    await act(async () => finish(created));
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe("Home");
+    expect(host.querySelector(".project-result")).toBeNull();
+    expect(host.textContent).toContain(`Created ${created.display_name}`);
+    expect(creations()).toHaveLength(1);
+  });
+});
+
 describe("desktop external repository import", () => {
   const digest = "a".repeat(64);
   const snapshot = "b".repeat(64);

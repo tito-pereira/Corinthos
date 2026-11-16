@@ -8,12 +8,69 @@ The [Phase 0 baseline](baseline.md) records the original SQLite layout.
 ## Project Registry and Project Summary
 
 Terminal Home and desktop share the per-user `recent-projects.json`. Version 1
-entries (`path`, `last_opened_at`) remain readable. Explicit project access
-records version 2 (`root`, `last_accessed_at`) using the existing lock and atomic
-update. The registry retains up to 20 normalized local roots in access order,
-including missing roots. Display and compatibility are observed from the project.
-The file holds paths and access times. `config.json` and `providers.json` keep
+entries (`path`, `last_opened_at`) and version 2 entries (`root`, `last_accessed_at`)
+remain readable without passive rewrites. Explicit access records version 3 with
+an optional `display_name`, using the existing lock and atomic update. Ordinary
+opens preserve saved names. The registry retains up to 20 normalized local roots
+in access order, including missing roots. Names without explicit metadata fall
+back to directory names. `config.json` and `providers.json` keep
 their separate version and ownership.
+
+## Named private project creation
+
+Desktop Home's **Create new project** accepts a display name and an explicit
+absolute local path. The path may identify an existing ordinary directory or a
+directory to create. The name has 1–128 Unicode code points before trimming;
+leading and trailing whitespace is trimmed, inner whitespace is preserved, and
+Unicode category C characters are rejected. The name is application metadata,
+not an approved Project Contract or project identity.
+
+The shared Python operation `workspace.project_create(root, display_name)` is
+exposed as the identified, negotiated-v2 RPC `project.create`. Python validates
+the path, pins existing path identities, classifies private state and serializes
+the entire operation with a per-user, canonical-root interprocess lock. The
+registry lock is held only for its own atomic update. New private state is fully
+initialized with `initialize_private()` in root-local private staging and
+published with the existing atomic no-replace directory move. Both staging
+directory identities are pinned and rechecked before reads/publication; the
+published private directory must retain that identity and the expected creation
+intent before registration. An interrupted
+stage cannot leave an incomplete canonical `.corinthos` directory. Abrupt
+process termination or path replacement can leave an unreferenced
+`.corinthos-create-*` private stage inside the selected or moved root; inspect it
+before manual cleanup. Cleanup rechecks root/stage/private identities and only
+removes an empty stage; nonempty or uncertain stages are retained. Automatic
+temporary-directory deletion is disabled, including during garbage collection.
+The root's parent need not be writable. Target `.gitignore`
+and other owner files are never edited.
+
+Creation leaves ordinary files and root instruction files unchanged. It creates
+no database for bootstrap-only projects, invokes or discovers no providers,
+publishes no contracts and supplies no approval or Validation authority. Valid
+current private state and bootstrap-only state are preserved. Legacy, invalid,
+unsupported and unverified state, including incomplete import state, fails
+closed; use the existing explicit migration/import recovery paths. When an
+import-owned intent exists, the canonical import service must classify it as
+completed `IMPORTED` before creation may reuse it. A valid bootstrap profile or
+an empty current database alone does not complete an interrupted import.
+
+The private `project-create.json` version-1 intent retains only the requested
+name for durable retry comparison. A matching retry verifies and reuses existing
+state; a different name conflicts. A saved explicit registry name also conflicts
+instead of being overwritten. Registration follows successful verification.
+`REGISTRY_INCOMPLETE` means private initialization succeeded: retry Create with
+the same name and root. Native errors carry only bounded recovery categories:
+`INVALID_INPUT`, `CONFLICT`, `ACCESS_DENIED`, `STATE_UNAVAILABLE` and
+`REGISTRY_INCOMPLETE`. A lost response is unconfirmed; reconnect and explicitly
+retry the same values. The desktop never automatically repeats this mutation.
+
+Success opens the authoritative returned summary and refreshes registry and
+Command projections. Leaving an in-flight form preserves an inspectable outcome.
+Cancellation before submission performs no creation request. Native selection
+and the broader onboarding redesign remain separate steps. The explicit
+**Continue with Project Manager** action shows the supported terminal command;
+GUI Project Manager draft authoring is unavailable, and the trusted foreground
+approval bridge retains its existing authority.
 
 Project Summary reads the bootstrap and a verified, read-only SQLite snapshot.
 It reports initialization and storage, project identity, active Project and
@@ -120,6 +177,7 @@ RPC, SQLite, contract wire and package versions are independent.
 | --- | --- |
 | `projects.list` | Page of registry entries, including missing roots. |
 | `project.summary`, `project.open` | Derived summary. Explicit open records recency and migrates verified v6. |
+| `project.create` | Named private initialization, retry-safe registration and authoritative summary; identified v2 requests only. |
 | `work.create`, `work.get`, `work.update`, `work.status` | Create, read or mutate one Work Item. Results include allowed next statuses. |
 | `work.list`, `work.tree`, `work.dependencies` | Paged records, hierarchy and prerequisite IDs. |
 

@@ -5,6 +5,7 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timedelta
 
 import pytest
 from test_validation_runtime import _review, audit  # noqa: F401
@@ -21,6 +22,7 @@ from corinthos.contracts import (
 from corinthos.contracts.model import canonical_json
 from corinthos.report import repository as report_repository
 from corinthos.report import service as report_service
+from corinthos.report import sources as report_sources
 from corinthos.report.repository import content_digest
 from corinthos.report.service import ReportService
 
@@ -227,9 +229,26 @@ def test_bulk_preflight_does_not_hold_the_writer_reservation(report, monkeypatch
 
 
 @pytest.mark.parametrize("invalid_part", ["document", "manifest"])
-def test_one_malformed_draft_does_not_poison_unrelated_report_lookup(report, invalid_part):
+def test_one_malformed_draft_does_not_poison_unrelated_report_lookup(
+    report, invalid_part, monkeypatch
+):
     service, project, candidate, *_ = report
+    with service.store._connection() as connection:
+        observed_at = [
+            datetime.fromisoformat(row[0])
+            for row in connection.execute("SELECT occurred_at FROM val_events")
+        ]
+    captured_at = max(observed_at) + timedelta(seconds=1)
+
+    class CaptureClock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return captured_at.astimezone(tz)
+
+    monkeypatch.setattr(report_sources, "datetime", CaptureClock)
     valid = service.generate(project, candidate=candidate)
+    cutoff = datetime.fromisoformat(valid["document"]["payload"]["report_scope"]["as_of"])
+    assert all(observation < cutoff for observation in observed_at)
     ref = service.publish(valid["draft_id"])
     invalid = service.generate(project, candidate=candidate, reason="Synthetic incomplete capture")
     package = service.repository.get(invalid["draft_id"])

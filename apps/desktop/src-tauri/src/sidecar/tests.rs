@@ -175,6 +175,58 @@ fn decode_rejects_mixed_or_unrecognized_frames() {
 }
 
 #[test]
+fn creation_errors_forward_only_known_recovery_codes() {
+    for (code, marker) in [
+        ("CONFLICT", "PROJECT_CREATE_CONFLICT"),
+        ("ACCESS_DENIED", "PROJECT_CREATE_ACCESS_DENIED"),
+        ("REGISTRY_INCOMPLETE", "PROJECT_CREATE_REGISTRY_INCOMPLETE"),
+        ("STATE_UNAVAILABLE", "PROJECT_CREATE_STATE_UNAVAILABLE"),
+        ("unknown private data", "The Corinthos sidecar rejected the request."),
+    ] {
+        let frame = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0", "id": 5,
+            "error": {"code": -32002, "message": "private detail", "data": {"creation_code": code}},
+        })).unwrap();
+        match decode(&frame).unwrap() {
+            Wire::Response(5, Err(actual)) => assert_eq!(actual, marker),
+            _ => panic!("expected a bounded creation rejection"),
+        }
+    }
+}
+
+#[test]
+fn creation_uses_the_real_backend_and_preserves_retry_identity() {
+    let directory = env::temp_dir().join(format!(
+        "corinthos-creation-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let project = directory.join("new project");
+    let mut command = python_command(&fixture_python(), &["-m", "corinthos.application.sidecar"]);
+    command.env("LOCALAPPDATA", directory.join("user"));
+    command.env("XDG_STATE_HOME", directory.join("user"));
+    let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT).unwrap();
+    assert!(handshake.supports("project.create"));
+    for _ in 0..2 {
+        let summary = child.request("project.create", json!({
+            "root": project, "display_name": "Native creation project",
+        })).unwrap();
+        assert_eq!(summary["display_name"], "Native creation project");
+        assert_eq!(summary["initialized"], true);
+        assert_eq!(summary["storage"], "ABSENT");
+        assert!(summary["active_project"].is_null());
+    }
+    assert_eq!(
+        child.request("project.create", json!({"root": project, "display_name": "Conflicting name"})),
+        Err("PROJECT_CREATE_CONFLICT"),
+    );
+    assert!(!project.join(".corinthos/state.db").exists());
+    assert_eq!(child.request("projects.list", json!({})).unwrap()["projects"].as_array().unwrap().len(), 1);
+    child.shutdown().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn handshake_failure_timeout_and_restart() {
     assert!(fixture("mismatch", HANDSHAKE_TIMEOUT, no_events()).is_err());
     assert!(fixture("missing_core", HANDSHAKE_TIMEOUT, no_events()).is_err());

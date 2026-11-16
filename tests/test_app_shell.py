@@ -133,7 +133,7 @@ def test_recent_projects_are_bounded_and_reopened_paths_are_deduplicated(tmp_pat
     _remember(roots[10])
     result = _recent(isolated_user)
     expected = [roots[10], *[root for root in reversed(roots[2:]) if root != roots[10]]]
-    assert result.keys() == {"version", "projects"} and result["version"] == 2
+    assert result.keys() == {"version", "projects"} and result["version"] == 3
     assert [item["root"] for item in result["projects"]] == [str(root) for root in expected]
     for entry in result["projects"]:
         assert entry.keys() == {"root", "last_accessed_at"}

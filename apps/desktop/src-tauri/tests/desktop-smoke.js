@@ -401,7 +401,41 @@
     return report("pass");
   }
 
+  async function verifyCreation() {
+    const primary = (name) => buttonNamed(".primary-navigation button", name);
+    const create = () => buttonNamed("button", "Create new project");
+    if (!(await waitFor(() => text(document.querySelector(".connection[role=status]")) === "Connected" &&
+      create()?.matches(":enabled")))) return report("fail [backend]");
+    create().click();
+    if (!(await waitFor(() => document.querySelector("#project-name")?.matches(":enabled")))) {
+      return report("fail [create-form]");
+    }
+    setInput(document.querySelector("#project-name"), "Packaged creation project");
+    setInput(document.querySelector("#project-root"), projectRoot);
+    const submit = () => buttonNamed("form button", "Create project");
+    if (!(await waitFor(() => submit()?.matches(":enabled")))) return report("fail [create-form]");
+    submit().form.requestSubmit(submit());
+    const summary = () => document.querySelector(".project-result");
+    if (!(await waitFor(() => text(summary()?.querySelector("h3")) === "Packaged creation project" &&
+      valueFor(summary(), "Initialized") === "Yes" && valueFor(summary(), "Storage") === "No database"))) {
+      return report("fail [create-result]");
+    }
+    if (valueFor(summary(), "Project Contract") || valueFor(summary(), "Workflow")) {
+      return report("fail [create-result]");
+    }
+    primary("Home").click();
+    if (!(await waitFor(() => Array.from(document.querySelectorAll(".project-list h3")).some(
+      (node) => text(node) === "Packaged creation project")))) return report("fail [create-registry]");
+    primary("Command").click();
+    if (!(await waitFor(() => Array.from(document.querySelectorAll(".command-card")).some(
+      (card) => text(card.querySelector("h3")) === "Packaged creation project" &&
+        normalizeWindowsPath(text(card.querySelector(".command-card-root"))) === normalizeWindowsPath(projectRoot)
+    )))) return report("fail [create-command]");
+    return report("pass");
+  }
+
   async function verify() {
+    if (mode === "create") return verifyCreation();
     const backendReady = await waitFor(() => {
       const backend = document.querySelector("#backend-title")?.closest("section");
       const codex = Array.from(document.querySelectorAll(".providers li")).find(

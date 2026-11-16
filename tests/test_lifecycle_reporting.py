@@ -2,7 +2,7 @@
 """Real sealed bytes and audits; contract authority/review fixtures are synthetic."""
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,7 +12,10 @@ from test_version_lifecycle import build_fixture as build_fixture
 from test_version_lifecycle import delivered as delivered
 
 from corinthos.contracts import ConflictError, IntegrityError
+from corinthos.lifecycle import playtest as playtest_service
+from corinthos.lifecycle import repository as lifecycle_repository
 from corinthos.lifecycle.playtest import PlaytestService
+from corinthos.report import sources as report_sources
 from corinthos.report.service import ReportService
 from corinthos.report.sources import capture, require_unchanged
 
@@ -178,16 +181,41 @@ def test_feedback_public_projection_redacts_private_text_keeps_original_private(
     )
 
 
-def test_public_reports_show_separate_readiness_scope_and_original_session_build(built):
+def test_public_reports_show_separate_readiness_scope_and_original_session_build(
+    built, monkeypatch
+):
     builds, build, planner, refs, *_ = built
     _promotable(builds, build, planner, refs)
     playtests = PlaytestService(builds.store)
     project_id = refs["project"].project_id
     playtests.configure(project_id, enabled=True)
     playtests.promote(project_id, build["record_id"])
+    recorded_at = datetime.fromisoformat(
+        playtests.repository.events(project_id)[-1]["occurred_at"]
+    ) + timedelta(seconds=1)
+    monkeypatch.setattr(lifecycle_repository, "now", lambda: recorded_at.isoformat())
+    monkeypatch.setattr(playtest_service, "now", lambda: recorded_at.isoformat())
     session = playtests.start(project_id)
-    cutoff = datetime.now(UTC).isoformat()
+    cutoff = (recorded_at + timedelta(seconds=1)).isoformat()
+    recorded_at += timedelta(seconds=2)
     playtests.end(session["record_id"], inspection=_INSPECTED)
+    captured_at = recorded_at + timedelta(seconds=1)
+
+    class CaptureClock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return captured_at.astimezone(tz)
+
+    monkeypatch.setattr(report_sources, "datetime", CaptureClock)
+    events = playtests.repository.events(project_id, record_id=session["record_id"])
+    opened = next(event for event in events if event["kind"] == "PLAYTEST_SESSION_OPENED")
+    ended = next(event for event in events if event["kind"] == "PLAYTEST_SESSION_ENDED")
+    assert (
+        datetime.fromisoformat(opened["occurred_at"])
+        < datetime.fromisoformat(cutoff)
+        < datetime.fromisoformat(ended["occurred_at"])
+        <= captured_at
+    )
     reports = ReportService(builds.store)
 
     def notes(as_of=None):
@@ -204,8 +232,8 @@ def test_public_reports_show_separate_readiness_scope_and_original_session_build
         )
         return draft["document"]["payload"]["decisions_and_change_history"]["notes"]
 
-    historical, current = notes(cutoff), notes()
-    for public in (historical, current):
+    historical, at_end, current = notes(cutoff), notes(ended["occurred_at"]), notes()
+    for public in (historical, at_end, current):
         readiness = next(note for note in public if note.startswith("Build " + build["record_id"]))
         assert "early" in readiness and "greet" in readiness
         assert refs["workflow"].revision_id in readiness
@@ -215,4 +243,5 @@ def test_public_reports_show_separate_readiness_scope_and_original_session_build
         assert build["record_id"] in origin and "milestone early" in origin
     assert any("current recorded state OPEN" in note for note in historical)
     assert not any("current recorded state ENDED" in note for note in historical)
+    assert any("current recorded state ENDED" in note for note in at_end)
     assert any("current recorded state ENDED" in note for note in current)

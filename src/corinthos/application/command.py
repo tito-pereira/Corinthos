@@ -11,7 +11,8 @@ from corinthos.context.redaction import sanitize_text
 from corinthos.contracts import ContractError, ContractStore, IntegrityError
 from corinthos.contracts.artifacts import private_directory
 from corinthos.external_import.service import _INTENT, _read_intent
-from corinthos.project_registry import ProjectRegistryService, display_name
+from corinthos.project_registry import ProjectRegistryService
+from corinthos.project_registry import display_name as directory_name
 from corinthos.project_state import _inspect_sources
 from corinthos.project_status import _absolute_root, inspect_project
 from corinthos.work import WorkService
@@ -340,11 +341,11 @@ def _attention(card, work_attention, decisions):
 class CommandService:
     """Combine existing project-owned read models without refreshing or migrating state."""
 
-    def project(self, root, *, last_accessed_at=None):
+    def project(self, root, *, last_accessed_at=None, display_name=None):
         root = str(root)
         value = {
             "root": root,
-            "display_name": display_name(root),
+            "display_name": display_name or directory_name(root),
             "last_accessed_at": last_accessed_at,
             "availability": "UNAVAILABLE",
             "initialized": False,
@@ -369,6 +370,12 @@ class CommandService:
             "lifecycle": None,
         }
         work_attention, decisions = [], []
+        if display_name is None:
+            try:
+                metadata = ProjectRegistryService().metadata(root)
+                value["display_name"] = metadata.get("display_name", directory_name(root))
+            except (ContractError, OSError):
+                pass
         try:
             status, sources = inspect_project(
                 root,

@@ -21,6 +21,25 @@
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
     },
     {
+      "if": { "properties": { "method": { "const": "project.create" } } },
+      "then": {
+        "required": ["id", "params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "properties": {
+              "root": { "type": "string", "minLength": 1, "maxLength": 4096 },
+              "display_name": {
+                "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S"
+              }
+            },
+            "required": ["root", "display_name"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
       "if": { "properties": { "method": { "const": "settings.providers" } } },
       "then": { "properties": { "params": {
         "type": "object", "properties": { "root": { "$ref": "#/$defs/importRoot" } },

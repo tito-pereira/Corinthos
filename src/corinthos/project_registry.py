@@ -2,17 +2,18 @@
 """Multi-project navigation over the existing per-user Recent Projects document."""
 
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from corinthos.contracts import ContractError, IntegrityError
+from corinthos.contracts import ConflictError, ContractError, IntegrityError
 from corinthos.project_status import MAX_ROOT_CHARS, ProjectStorage, project_status
 from corinthos.user_state import read_state, update_state
 
 _FILE = "recent-projects.json"
-_EMPTY = {"version": 2, "projects": []}
+_EMPTY = {"version": 3, "projects": []}
 _MAX_PROJECTS = 20
 _OBSERVATION_TIMEOUT = 0.1
 
@@ -36,9 +37,23 @@ def display_name(root: str) -> str:
     )[:128]
 
 
+def validate_display_name(value: str) -> str:
+    """Keep Unicode names, trim surrounding spaces and reject invisible controls."""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 128
+        or any(unicodedata.category(char).startswith("C") for char in value)
+    ):
+        raise ValueError("Supply a project name of 1 to 128 characters without controls.")
+    name = value.strip()
+    if not name:
+        raise ValueError("Supply a nonblank project name.")
+    return name
+
+
 def _records(document: dict) -> list[dict[str, str]]:
     version = document.get("version")
-    if type(version) is not int or version not in (1, 2):
+    if type(version) is not int or version not in (1, 2, 3):
         raise IntegrityError("Unsupported Project Registry version.")
     projects = document.get("projects")
     if (
@@ -54,7 +69,15 @@ def _records(document: dict) -> list[dict[str, str]]:
     roots = set()
     for entry in projects:
         try:
-            if not isinstance(entry, dict) or entry.keys() != {root_key, date_key}:
+            if not isinstance(entry, dict) or (
+                entry.keys() != {root_key, date_key}
+                and not (version == 3 and entry.keys() == {root_key, date_key, "display_name"})
+            ):
+                raise ValueError
+            if (
+                "display_name" in entry
+                and validate_display_name(entry["display_name"]) != entry["display_name"]
+            ):
                 raise ValueError
             root, date = entry[root_key], entry[date_key]
             if (
@@ -75,13 +98,19 @@ def _records(document: dict) -> list[dict[str, str]]:
         except (TypeError, ValueError):
             raise IntegrityError("The saved Project Registry is invalid.") from None
         roots.add(key)
-        records.append({"root": root, "last_accessed_at": date})
+        records.append(
+            {
+                "root": root,
+                "last_accessed_at": date,
+                **({"display_name": entry["display_name"]} if "display_name" in entry else {}),
+            }
+        )
     return records
 
 
 def _observed(record: dict[str, str]) -> ProjectRegistryEntry:
     root, date = record["root"], record["last_accessed_at"]
-    name = display_name(root)
+    name = record.get("display_name", display_name(root))
     try:
         status = project_status(root, inspection_timeout=_OBSERVATION_TIMEOUT)
     except (OSError, ValueError):
@@ -98,7 +127,7 @@ def _observed(record: dict[str, str]) -> ProjectRegistryEntry:
 
 
 class ProjectRegistryService:
-    """Store only normalized paths and explicit access times for a bounded set of projects."""
+    """Store bounded local references, optional display names and explicit access times."""
 
     def _saved(self) -> list[dict[str, str]]:
         return _records(read_state(_FILE, _EMPTY))
@@ -113,35 +142,44 @@ class ProjectRegistryService:
         return [_observed(record) for record in self._saved()[offset : offset + limit]]
 
     def last_accessed_at(self, root: str) -> str | None:
+        return self.metadata(root).get("last_accessed_at")
+
+    def metadata(self, root: str) -> dict[str, str]:
+        """Read optional application metadata without rewriting older documents."""
         key = os.path.normcase(root)
         return next(
-            (
-                record["last_accessed_at"]
-                for record in self._saved()
-                if os.path.normcase(record["root"]) == key
-            ),
-            None,
+            (record for record in self._saved() if os.path.normcase(record["root"]) == key),
+            {},
         )
 
-    def remember(self, root: str | Path) -> ProjectRegistryEntry:
+    def remember(self, root: str | Path, *, name: str | None = None) -> ProjectRegistryEntry:
         """Revalidate an explicitly opened project and atomically record its access."""
         status = project_status(root)
         if not status.initialized or status.storage in {"INVALID", "UNVERIFIED"}:
             raise ContractError("The project is unavailable for access.")
         path = status.root
+        if name is not None:
+            name = validate_display_name(name)
         key = os.path.normcase(path)
         entry = {"root": path, "last_accessed_at": datetime.now(UTC).isoformat()}
 
         def update(document):
-            others = [
-                record for record in _records(document) if os.path.normcase(record["root"]) != key
-            ]
-            return {"version": 2, "projects": [entry, *others[: _MAX_PROJECTS - 1]]}
+            records = _records(document)
+            previous = next(
+                (record for record in records if os.path.normcase(record["root"]) == key), {}
+            )
+            saved_name = previous.get("display_name")
+            if name is not None and saved_name is not None and saved_name != name:
+                raise ConflictError("Creation conflicts with the saved project name.")
+            if name is not None or saved_name is not None:
+                entry["display_name"] = name if name is not None else saved_name
+            others = [record for record in records if os.path.normcase(record["root"]) != key]
+            return {"version": 3, "projects": [entry, *others[: _MAX_PROJECTS - 1]]}
 
         update_state(_FILE, _EMPTY, update)
         return ProjectRegistryEntry(
             path,
-            display_name(path),
+            entry.get("display_name", display_name(path)),
             entry["last_accessed_at"],
             "AVAILABLE",
             status.initialized,

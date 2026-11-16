@@ -12,6 +12,7 @@ dist/
 *.egg-info/
 .corinthos/
 .corinthos-migration-*/
+.corinthos-create-*/
 # Earlier private state remains excluded after the rename.
 .nukytera/
 # Legacy private state remains excluded during the naming migration.

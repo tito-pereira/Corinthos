@@ -93,6 +93,13 @@ def project_open(root):
     return project_summary(status.root)
 
 
+def project_create(root, display_name):
+    """Create/register private state without publishing project identity or authority."""
+    from corinthos.project_creation import create_project
+
+    return create_project(root, display_name)
+
+
 def _work(root):
     from corinthos.work import WorkService
 

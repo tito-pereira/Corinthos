@@ -67,6 +67,7 @@ _V2_OPERATIONS = {
     "projects.list": (workspace.projects_list, (), _PAGE_OPTIONS),
     "project.summary": (workspace.project_summary, ("root",), ()),
     "project.open": (workspace.project_open, ("root",), ()),
+    "project.create": (workspace.project_create, ("root", "display_name"), ()),
     "work.create": (
         workspace.work_create,
         ("root", "scope_level", "objective", "acceptance_criteria"),
@@ -148,6 +149,7 @@ _MUTATIONS = {
     "context.create",
     "handoff.create",
     "project.open",
+    "project.create",
     "work.create",
     "work.update",
     "work.status",
@@ -173,8 +175,9 @@ _ERROR_MESSAGES = {
 
 
 class _RpcError(Exception):
-    def __init__(self, code: int):
+    def __init__(self, code: int, creation_code: str | None = None):
         self.code = code
+        self.creation_code = creation_code
 
 
 def _json_object(pairs):
@@ -263,9 +266,21 @@ def _dispatch(
             operation = getattr(sessions, action)
         else:
             operation, required, optional = _V2_OPERATIONS[method]
-        params = _params(message, required=required, optional=optional)
+        try:
+            params = _params(message, required=required, optional=optional)
+        except _RpcError as error:
+            if method == "project.create":
+                error.creation_code = "INVALID_INPUT"
+            raise
         if "root" in params and not isinstance(params["root"], str):
-            raise _RpcError(-32602)
+            raise _RpcError(-32602, "INVALID_INPUT" if method == "project.create" else None)
+        if method == "project.create" and (
+            not 1 <= len(params["root"]) <= 4096
+            or not isinstance(params["display_name"], str)
+            or not 1 <= len(params["display_name"]) <= 128
+            or not params["display_name"].strip()
+        ):
+            raise _RpcError(-32602, "INVALID_INPUT")
         from corinthos.sessions.model import SessionError
         from corinthos.work import WorkError
 
@@ -273,10 +288,22 @@ def _dispatch(
             return operation(**params), negotiated, False
         except (SessionError, WorkError):
             raise _RpcError(-32602) from None
-        except ContractError:
-            raise _RpcError(-32002) from None
+        except ContractError as error:
+            creation_code = None
+            if method == "project.create":
+                creation_code = getattr(error, "creation_code", "STATE_UNAVAILABLE")
+                if creation_code not in {
+                    "CONFLICT",
+                    "ACCESS_DENIED",
+                    "REGISTRY_INCOMPLETE",
+                    "STATE_UNAVAILABLE",
+                }:
+                    creation_code = "STATE_UNAVAILABLE"
+            raise _RpcError(-32002, creation_code) from None
         except ValueError:
-            raise _RpcError(-32602) from None
+            raise _RpcError(
+                -32602, "INVALID_INPUT" if method == "project.create" else None
+            ) from None
     if method not in _V1_METHODS:
         raise _RpcError(-32601)
     if negotiated is None:
@@ -305,12 +332,15 @@ def _dispatch(
     return {"stopping": True}, negotiated, "id" in message
 
 
-def _error(code: int, request_id=None) -> dict:
-    return {
+def _error(code: int, request_id=None, creation_code: str | None = None) -> dict:
+    reply = {
         "jsonrpc": "2.0",
         "id": request_id,
         "error": {"code": code, "message": _ERROR_MESSAGES[code]},
     }
+    if creation_code is not None:
+        reply["error"]["data"] = {"creation_code": creation_code}
+    return reply
 
 
 def _write(output: BinaryIO, message: dict, *, ascii_only: bool = True) -> None:
@@ -366,7 +396,7 @@ def _serve(source, output, diagnostics, sessions):
                 print("Session cleanup exceeded the shutdown deadline.", file=diagnostics)
             reply = {"jsonrpc": "2.0", "id": message.get("id"), "result": result}
         except _RpcError as error:
-            reply = _error(error.code, message.get("id"))
+            reply = _error(error.code, message.get("id"), error.creation_code)
             stopping = False
         except (ContractError, OSError, RuntimeError):
             reply = _error(-32002, message.get("id"))

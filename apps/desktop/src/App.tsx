@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   bridge,
+  ProjectCreationError,
   type BackendSnapshot,
   type ProjectEntry,
   type ProjectStatus,
@@ -20,6 +21,16 @@ import { WorkItems } from "./WorkItems";
 
 type Screen = "Home" | "Command" | "Projects" | "Settings";
 const screens: Screen[] = ["Home", "Command", "Projects", "Settings"];
+
+type CreationState = {
+  name: string;
+  root: string;
+  shown: boolean;
+  pending: boolean;
+  outcome: "draft" | "uncertain" | "failed" | "created";
+  error: string;
+  summary: ProjectSummary | null;
+};
 
 const storageLabels: Record<ProjectStatus["storage"], string> = {
   ABSENT: "No database",
@@ -94,14 +105,18 @@ function RegistryEntry({ entry, busy, inspect, open }: {
   );
 }
 
-function Workspace({ methods, providers, onProviders }: {
+function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate }: {
   methods: string[];
   providers: ProviderStatus[];
   onProviders: (value: ProviderStatus[]) => void;
+  creation: CreationState;
+  onCreation: (update: (value: CreationState) => CreationState) => void;
+  onCreate: () => Promise<ProjectSummary | null>;
 }) {
   const [screen, setScreen] = useState<Screen>("Home");
   const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
-  const [root, setRoot] = useState("");
+  const root = creation.root;
+  const setRoot = (value: string) => onCreation((previous) => ({ ...previous, root: value }));
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
   const [registry, setRegistry] = useState<ProjectEntry[]>([]);
@@ -111,9 +126,15 @@ function Workspace({ methods, providers, onProviders }: {
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState("");
+  const [creationFields, setCreationFields] = useState({ name: "", root: "" });
+  const [showPlanning, setShowPlanning] = useState(false);
+  const [commandVersion, setCommandVersion] = useState(0);
   const openRequest = useRef(0);
+  const navigation = useRef(0);
+  const mounted = useRef(true);
   const canList = methods.includes("projects.list");
   const canOpen = methods.includes("project.open");
+  const canCreate = methods.includes("project.create");
   const canInspect = methods.includes("project.summary");
   const canViewAgents = Boolean(project?.initialized && (project.schema_version ?? 0) >= 8 && methods.includes("session.list"));
   const canAuditContext = Boolean(project?.initialized && (project.schema_version ?? 0) >= 9 && methods.includes("context.list"));
@@ -145,9 +166,20 @@ function Workspace({ methods, providers, onProviders }: {
     return () => { listRequest.current += 1; };
   }, [canList]);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; navigation.current += 1; };
+  }, []);
+
+  function changeScreen(value: Screen) {
+    navigation.current += 1;
+    setScreen(value);
+  }
+
   async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
     if (!path.trim() || (explicit ? !canOpen : !canInspect)) return;
     const request = ++openRequest.current;
+    navigation.current += 1;
     setOpening(true);
     setOpenError("");
     setProject(null);
@@ -172,6 +204,7 @@ function Workspace({ methods, providers, onProviders }: {
       setSelectedWork((previous) => ({ ...previous, [path]: workId }));
     }
     if (project?.root === path) {
+      navigation.current += 1;
       setView(target);
       setScreen("Projects");
     } else {
@@ -181,7 +214,33 @@ function Workspace({ methods, providers, onProviders }: {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void openProject(root, true);
+    if (!creation.shown) {
+      void openProject(root, true);
+      return;
+    }
+    if (creation.pending || opening || !canCreate) return;
+    const fields = {
+      name: !creation.name.trim() ? "Enter a project name." :
+        Array.from(creation.name).length > 128 || /\p{C}/u.test(creation.name)
+          ? "Use at most 128 characters without control or unsupported characters." : "",
+      root: !root.trim() ? "Enter the project directory." :
+        !/^(?:[A-Za-z]:[\\/]|\/(?!\/))/.test(root) || /[\0\r\n]/.test(root)
+          ? "Enter an absolute local directory path." : "",
+    };
+    setCreationFields(fields);
+    if (fields.name || fields.root) return;
+    const current = navigation.current;
+    void onCreate().then(async (result) => {
+      if (!result || !mounted.current) return;
+      setCommandVersion((value) => value + 1);
+      if (current === navigation.current) {
+        setProject(result);
+        setView({ tab: "overview" });
+        setShowPlanning(false);
+        setScreen("Projects");
+      }
+      await loadProjects(0);
+    });
   }
 
   const handlesProjects = screen === "Home" || screen === "Projects";
@@ -199,15 +258,15 @@ function Workspace({ methods, providers, onProviders }: {
     <>
       <nav className="primary-navigation" aria-label="Primary navigation">
         {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
-          onClick={() => setScreen(name)}>{name}</button>)}
+          onClick={() => changeScreen(name)}>{name}</button>)}
       </nav>
-      {screen === "Command" && <Command methods={methods} open={navigate} />}
+      {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
       {screen === "Settings" && <ProviderSettings methods={methods} root={project?.root}
         providers={providers} onProviders={onProviders} />}
       {handlesProjects && <section aria-labelledby="projects-title">
         <div className="section-heading">
           <h2 id="projects-title">{screen === "Home" ? "Recent projects" : "Projects"}</h2>
-          {screen === "Home" && <button type="button" className="secondary" onClick={() => setScreen("Command")}>Open Command</button>}
+          {screen === "Home" && <button type="button" className="secondary" onClick={() => changeScreen("Command")}>Open Command</button>}
         </div>
         {!canList && <p>Project browsing is unavailable in this backend.</p>}
         {loading && canList && <p role="status">Loading projects…</p>}
@@ -218,7 +277,7 @@ function Workspace({ methods, providers, onProviders }: {
             <RegistryEntry
               key={entry.root}
               entry={entry}
-              busy={opening || (entry.availability === "AVAILABLE" && !canOpen)}
+              busy={opening || creation.pending || (entry.availability === "AVAILABLE" && !canOpen)}
               inspect={canInspect}
               open={(path, explicit) => void openProject(path, explicit)}
             />
@@ -230,26 +289,61 @@ function Workspace({ methods, providers, onProviders }: {
             <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
           )}
         </div>}
-        <form onSubmit={submit}>
+        {screen === "Home" && <button type="button" disabled={!canCreate || opening || creation.pending}
+          onClick={() => {
+            setCreationFields({ name: "", root: "" });
+            onCreation((previous) => ({ ...previous, shown: true }));
+          }}>Create new project</button>}
+        <form onSubmit={submit} aria-label={creation.shown ? "Create project" : "Open project"} noValidate={creation.shown}>
+          {creation.shown && <>
+            <h3>Create new project</h3>
+            <p>The name is application metadata. Creation preserves existing files and prepares only private Corinthos state.</p>
+            <label htmlFor="project-name">Project name</label>
+            <input id="project-name" value={creation.name} maxLength={256} required disabled={creation.pending}
+              aria-invalid={Boolean(creationFields.name)} aria-describedby={creationFields.name ? "project-name-error" : undefined}
+              onChange={(event) => {
+                const name = event.target.value;
+                onCreation((previous) => ({ ...previous, name }));
+                setCreationFields((previous) => ({ ...previous, name: "" }));
+              }} />
+            {creationFields.name && <p id="project-name-error" role="alert">{creationFields.name}</p>}
+          </>}
           <label htmlFor="project-root">Project root</label>
           <div className="field-row">
             <input
               id="project-root"
               value={root}
-              onChange={(event) => setRoot(event.target.value)}
+              onChange={(event) => {
+                setRoot(event.target.value);
+                setCreationFields((previous) => ({ ...previous, root: "" }));
+              }}
               placeholder="Enter a local directory path"
               maxLength={4096}
-              disabled={!canOpen || opening}
+              disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending}
+              aria-invalid={Boolean(creation.shown && creationFields.root)}
+              aria-describedby={creation.shown && creationFields.root ? "project-root-error" : undefined}
               required
             />
-            <button type="submit" disabled={!canOpen || opening || !root.trim()}>Open project</button>
+            <button type="submit" disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || (!creation.shown && !root.trim())}>
+              {creation.shown ? creation.outcome === "uncertain" || creation.outcome === "failed" ? "Retry creation" : "Create project" : "Open project"}
+            </button>
+            {creation.shown && <button type="button" className="secondary" onClick={() => {
+              navigation.current += 1;
+              onCreation((previous) => ({ ...previous, shown: false }));
+              setCreationFields({ name: "", root: "" });
+            }}>{creation.pending ? "Leave creation" : "Cancel creation"}</button>}
           </div>
+          {creation.shown && creationFields.root && <p id="project-root-error" role="alert">{creationFields.root}</p>}
         </form>
+        {creation.outcome === "created" && creation.summary && <p role="status">
+          Created {creation.summary.display_name}. <button type="button" disabled={opening || creation.pending}
+            onClick={() => void openProject(creation.summary!.root, false)}>Inspect created project</button>
+        </p>}
         {opening && <p role="status">Opening project…</p>}
         {openError && <p role="alert">{openError}</p>}
         {methods.includes("import.inspect") && <RepositoryImport
           canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
-          canOpen={canOpen} disabled={opening}
+          canOpen={canOpen} disabled={opening || creation.pending}
           onOpen={async (importedRoot) => {
             if (canOpen) await openProject(importedRoot, true);
             else await loadProjects(0);
@@ -263,6 +357,16 @@ function Workspace({ methods, providers, onProviders }: {
         <section aria-labelledby="project-title">
           <div className="section-heading"><h2 id="project-title">Project Summary</h2></div>
           <ProjectFacts project={project} />
+          {project.initialized && !project.active_project && <div>
+            <button type="button" className="secondary" onClick={() => setShowPlanning((value) => !value)}>
+              Continue with Project Manager
+            </button>
+            {showPlanning && <div>
+              <p>Project Manager draft authoring is available through the terminal. GUI authoring is unavailable in this version.</p>
+              <p>In <code>{project.root}</code>, run <code>corinthos project --root . start</code>.</p>
+              <p>Reserved decisions still require the trusted foreground terminal approval.</p>
+            </div>}
+          </div>}
           <nav className="field-row project-views" aria-label="Project views">
             {tabs.filter((tab) => tab.enabled).map(({ tab, label }) => <button type="button" key={tab}
               aria-pressed={activeTab === tab} onClick={() => setView({ tab })}>{label}</button>)}
@@ -306,10 +410,47 @@ function Workspace({ methods, providers, onProviders }: {
 export function App() {
   const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
   const request = useRef(0);
+  const creationRequest = useRef(0);
+  const creationInFlight = useRef(false);
+  const [creation, setCreation] = useState<CreationState>({
+    name: "", root: "", shown: false, pending: false, outcome: "draft", error: "", summary: null,
+  });
 
   function disconnected(error = "The sidecar connection closed.") {
     request.current += 1;
+    creationRequest.current += 1;
+    creationInFlight.current = false;
+    setCreation((previous) => previous.pending ? { ...previous, pending: false, shown: true, outcome: "uncertain",
+      error: "Creation may have completed before disconnect. Reconnect, inspect the selected directory, or explicitly retry with the same name and path." } : previous);
     setSnapshot({ connection: "disconnected", error });
+  }
+
+  async function createProject() {
+    if (creationInFlight.current) return null;
+    creationInFlight.current = true;
+    const current = ++creationRequest.current;
+    setCreation((previous) => ({ ...previous, pending: true, outcome: "draft", error: "", summary: null }));
+    try {
+      const result = await bridge.createProject(creation.root, creation.name);
+      if (current !== creationRequest.current) return null;
+      setCreation((previous) => ({ ...previous, pending: false, shown: false, outcome: "created", summary: result }));
+      return result;
+    } catch (error) {
+      const code = error instanceof ProjectCreationError ? error.creationCode : "UNCONFIRMED";
+      const messages = {
+        INVALID_INPUT: "Check the project name and absolute local directory path, then retry creation.",
+        CONFLICT: "This directory already has a different creation name or conflicting state. Inspect it and retry only with its original name and path.",
+        ACCESS_DENIED: "Corinthos could not access the selected directory. Check its permissions, then retry with the same name and path.",
+        STATE_UNAVAILABLE: "Corinthos could not verify the existing private state. Its contents were retained; inspect the selected directory before retrying.",
+        REGISTRY_INCOMPLETE: "Private initialization completed, but Projects could not save the entry. Retry with the same name and path to recover registration.",
+        UNCONFIRMED: "Creation was not confirmed. Inspect the selected directory or explicitly retry with the same name and path; valid initialized state is retained.",
+      };
+      if (current === creationRequest.current) setCreation((previous) => ({ ...previous, pending: false,
+        outcome: code === "UNCONFIRMED" ? "uncertain" : "failed", error: messages[code] }));
+      return null;
+    } finally {
+      if (current === creationRequest.current) creationInFlight.current = false;
+    }
   }
 
   useEffect(() => {
@@ -336,6 +477,7 @@ export function App() {
     return () => {
       mounted = false;
       request.current += 1;
+      creationRequest.current += 1;
       unlisten?.();
     };
   }, []);
@@ -383,7 +525,12 @@ export function App() {
         )}
       </section>
 
+      {creation.pending && <p role="status">Creating project. The outcome is not yet confirmed. Leaving this form does not cancel backend initialization.</p>}
+      {creation.error && <div role="alert"><p>{creation.error}</p>
+        <p>{creation.name} <code>{creation.root}</code></p>
+      </div>}
       {ready && <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
+        creation={creation} onCreation={setCreation} onCreate={createProject}
         onProviders={(providers) => setSnapshot((current) => current?.connection === "ready"
           ? { ...current, providers: { providers } } : current)} />}
     </main>

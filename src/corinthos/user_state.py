@@ -58,7 +58,7 @@ def _path(filename: str, *, create: bool = False) -> Path:
 
 
 def _validate(filename: str, document):
-    supported = {1, 2} if filename == "recent-projects.json" else {1}
+    supported = {1, 2, 3} if filename == "recent-projects.json" else {1}
     if (
         not isinstance(document, dict)
         or type(document.get("version")) is not int

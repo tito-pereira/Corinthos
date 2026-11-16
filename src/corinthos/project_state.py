@@ -139,13 +139,13 @@ class ProjectStateService:
         if sources is None:
             sources = _unavailable(None)
         try:
-            last_accessed = ProjectRegistryService().last_accessed_at(status.root)
+            metadata = ProjectRegistryService().metadata(status.root)
         except (ContractError, OSError):
-            last_accessed = None
+            metadata = {}
             sources.unavailable_sources.append("REGISTRY")
         return ProjectSummary(
             **vars(status),
             **vars(sources),
-            display_name=display_name(status.root),
-            last_accessed_at=last_accessed,
+            display_name=metadata.get("display_name", display_name(status.root)),
+            last_accessed_at=metadata.get("last_accessed_at"),
         )

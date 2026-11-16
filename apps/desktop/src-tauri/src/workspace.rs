@@ -16,6 +16,7 @@ const WORKSPACE_METHODS: &[&str] = &[
     "projects.list",
     "project.summary",
     "project.open",
+    "project.create",
     "import.inspect",
     "import.commit",
     "import.status",
@@ -51,10 +52,23 @@ pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
     if !WORKSPACE_METHODS.contains(&method) || !params.is_object() {
         return Err("That workspace operation is unavailable.");
     }
+    if method == "project.create"
+        && (params.as_object().is_none_or(|value| value.len() != 2)
+            || !params.get("root").is_some_and(Value::is_string)
+            || !params.get("display_name").and_then(Value::as_str).is_some_and(|name| {
+                !name.trim().is_empty() && name.chars().count() <= 128
+            }))
+    {
+        return Err("PROJECT_CREATE_INVALID_INPUT");
+    }
     if let Some(root) = params.get("root")
         && !root.as_str().is_some_and(valid_root)
     {
-        return Err("Enter an absolute local project directory.");
+        return Err(if method == "project.create" {
+            "PROJECT_CREATE_INVALID_INPUT"
+        } else {
+            "Enter an absolute local project directory."
+        });
     }
     Ok(())
 }
@@ -117,6 +131,22 @@ mod tests {
         #[cfg(windows)]
         for root in [r"\\host\share\project", r"\\?\C:\project", "C:relative", "C:/dir:stream"] {
             assert!(validate("project.summary", &json!({"root": root})).is_err());
+        }
+    }
+
+    #[test]
+    fn project_creation_admits_only_its_two_bounded_fields() {
+        let root = if cfg!(windows) { "C:/project" } else { "/project" };
+        assert!(validate("project.create", &json!({"root": root, "display_name": "Café"})).is_ok());
+        for params in [
+            json!({"root": root}),
+            json!({"root": root, "display_name": 1}),
+            json!({"root": root, "display_name": "   "}),
+            json!({"root": root, "display_name": "x".repeat(129)}),
+            json!({"root": root, "display_name": "Name", "extra": true}),
+            json!({"root": "relative", "display_name": "Name"}),
+        ] {
+            assert_eq!(validate("project.create", &params), Err("PROJECT_CREATE_INVALID_INPUT"));
         }
     }
 
