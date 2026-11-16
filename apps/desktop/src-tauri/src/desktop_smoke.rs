@@ -33,6 +33,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
         return Err(invalid_fixture());
     }
     let mode = match env::var("CORINTHOS_DESKTOP_SMOKE_START").as_deref() {
+        Ok("picker") => "picker",
         Ok("create") => "create",
         Ok("adaptive") => "adaptive",
         Ok("adaptive-passive") => "adaptive-passive",
@@ -44,6 +45,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
         Ok("1") => "sessions",
         _ => "passive",
     };
+    if mode == "picker" {
+        return Ok(window.data_directory(project.parent().ok_or_else(invalid_fixture)?.join("picker-webview")));
+    }
     let script = format!(
         "({})({}, \"{mode}\");",
         include_str!("../tests/desktop-smoke.js"),

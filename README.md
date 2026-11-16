@@ -237,8 +237,11 @@ for commands, precedence and verification limits.
 
 ## Create your first project specification
 
-On desktop Home, choose **Create new project**, enter a display name and an
-absolute local project directory, then choose **Create project**. Existing
+On desktop Home, choose **Create new project**, enter a display name and use
+**Select folder** to choose its directory, then choose **Create project**.
+Open and repository import use the same native Windows folder picker. The chosen
+path stays visible; **Enter path manually** is the advanced fallback. Selection
+alone does not initialize, open or import anything. Existing
 ordinary files and root instruction files are preserved. The project opens after
 private initialization and registration. Names appear in Home, Projects and
 Command, including after restarting the application.

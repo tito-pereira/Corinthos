@@ -73,7 +73,7 @@ pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn valid_root(root: &str) -> bool {
+pub(crate) fn valid_root(root: &str) -> bool {
     if root.chars().any(char::is_control) || root.chars().count() > 4096 {
         return false;
     }
@@ -182,6 +182,7 @@ mod tests {
                 "allow-backend-snapshot",
                 "allow-workspace-request",
                 "allow-restart-backend",
+                "allow-select-project-directory",
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
             ]),

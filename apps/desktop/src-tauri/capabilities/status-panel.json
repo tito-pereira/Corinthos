@@ -8,6 +8,7 @@
     "allow-backend-snapshot",
     "allow-workspace-request",
     "allow-restart-backend",
+    "allow-select-project-directory",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

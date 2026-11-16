@@ -8,6 +8,28 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
+describe("native directory selection transport", () => {
+  it("returns cancellation separately from a native failure", async () => {
+    invoke.mockResolvedValueOnce(null);
+    expect(await bridge.selectProjectDirectory()).toBeNull();
+    invoke.mockRejectedValueOnce("DIRECTORY_PICKER_UNAVAILABLE");
+    await expect(bridge.selectProjectDirectory()).rejects.toBe("DIRECTORY_PICKER_UNAVAILABLE");
+    expect(invoke.mock.calls).toEqual([["select_project_directory"], ["select_project_directory"]]);
+  });
+
+  it("opens independently while the serialized Python request queue is pending", async () => {
+    let finish: (value: object) => void = () => {};
+    invoke.mockImplementation((command) => command === "workspace_request"
+      ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve("C:\\selected"));
+    const opening = bridge.project("C:\\project", true);
+    await Promise.resolve();
+    expect(await bridge.selectProjectDirectory()).toBe("C:\\selected");
+    expect(invoke.mock.calls.map(([command]) => command)).toEqual(["workspace_request", "select_project_directory"]);
+    finish({ root: "C:\\project" });
+    await opening;
+  });
+});
+
 describe("project creation transport", () => {
   it("sends exactly the selected root and display name and returns the backend summary", async () => {
     const summary = { root: "C:\\projects\\one", display_name: "My project", initialized: true };

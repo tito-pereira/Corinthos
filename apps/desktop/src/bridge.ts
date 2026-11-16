@@ -385,6 +385,7 @@ export type BackendSnapshot =
   | { connection: "disconnected"; error?: string };
 
 export const bridge = {
+  selectProjectDirectory: () => invoke<string | null>("select_project_directory"),
   snapshot: () => invoke<BackendSnapshot>("backend_snapshot"),
   projects: (offset: number) =>
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),

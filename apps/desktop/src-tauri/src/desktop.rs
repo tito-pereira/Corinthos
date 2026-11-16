@@ -144,6 +144,26 @@ async fn workspace_request(
     .map_err(|_| "The sidecar bridge could not complete the request.")?
 }
 
+#[tauri::command]
+async fn select_project_directory(window: tauri::WebviewWindow) -> Result<Option<String>, &'static str> {
+    use corinthos_desktop::directory_picker;
+    if window.label() != "main" {
+        return Err(directory_picker::UNAVAILABLE);
+    }
+    #[cfg(windows)]
+    {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        std::thread::Builder::new().name("corinthos-folder-picker".to_owned()).spawn(move || {
+            let selected = window.hwnd().map_err(|_| directory_picker::FAILED)
+                .and_then(directory_picker::select);
+            let _ = sender.blocking_send(selected);
+        }).map_err(|_| directory_picker::FAILED)?;
+        receiver.recv().await.ok_or(directory_picker::FAILED)?
+    }
+    #[cfg(not(windows))]
+    Err(directory_picker::UNAVAILABLE)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(DesktopState::default())
@@ -173,6 +193,7 @@ pub fn run() {
             backend_snapshot,
             workspace_request,
             restart_backend,
+            select_project_directory,
         ])
         .build(tauri::generate_context!())
         .expect("could not build the Corinthos desktop application");

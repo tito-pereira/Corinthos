@@ -29,6 +29,37 @@ path check. Rust owns process lifecycle and transports only these operations.
 The WebView receives no shell capability and ships its frontend locally.
 No-argument `corinthos` continues to open the CLI Home.
 
+## Native directory selection
+
+Create, Open and repository Import share a directory-selection control. Its
+`select_project_directory` command is direct Tauri IPC, independent of the Python
+request queue. The main-window capability grants only this additional command;
+the WebView receives no filesystem, shell or arbitrary-dialog options.
+
+Windows uses `IFileOpenDialog` through the existing locked `windows` crate version
+as an optional direct desktop dependency. A fresh STA thread owns the COM
+apartment and main-window-owned dialog. Fixed options select one existing local
+directory without changing the working directory. Cancellation returns `null`;
+other failures return bounded errors. Paths use strict UTF-16 conversion, reject
+unsupported native path forms and redirected ancestors, and are still validated
+by Python when an explicit project operation runs. The backend mutex is never
+held while the dialog is open. Other platforms report unavailable and retain
+manual entry.
+
+The OS dialog may offer New folder. A folder deliberately created there belongs
+to the user and can remain after cancellation. Cancelling or selecting a folder
+performs no automatic initialization, registration, discovery, import or provider
+invocation. The shared control preserves drafts on cancellation/failure, prevents
+duplicate selection and submission, and ignores stale completions. Changing an
+Import path invalidates its prior review.
+
+The implementation distinguishes the documented
+[`IModalWindow::Show` cancellation result](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-imodalwindow-show)
+from other errors, uses the fixed
+[folder-dialog options](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_fileopendialogoptions),
+and balances [COM apartment initialization](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-coinitializeex)
+with interface and allocated-string cleanup.
+
 ## RPC v1 over stdio
 
 Run the backend entry point as

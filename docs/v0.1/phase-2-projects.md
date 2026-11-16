@@ -19,7 +19,10 @@ their separate version and ownership.
 ## Named private project creation
 
 Desktop Home's **Create new project** accepts a display name and an explicit
-absolute local path. The path may identify an existing ordinary directory or a
+absolute local path, normally obtained through **Select folder**. The same native
+Windows picker supports Open and repository Import; **Enter path manually** is
+the advanced fallback. Selection fills the draft and preserves the existing
+explicit Create/Open/Inspect/Confirm actions. The path may identify an existing ordinary directory or a
 directory to create. The name has 1–128 Unicode code points before trimming;
 leading and trailing whitespace is trimmed, inner whitespace is preserved, and
 Unicode category C characters are rejected. The name is application metadata,

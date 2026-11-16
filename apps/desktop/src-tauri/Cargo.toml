@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:windows"]
 desktop-smoke = ["desktop"]
 custom-protocol = ["tauri/custom-protocol"]
 
@@ -15,6 +15,9 @@ custom-protocol = ["tauri/custom-protocol"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "=2.12.5", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", optional = true, features = ["Win32_System_Com", "Win32_UI_Shell"] }
 
 [build-dependencies]
 tauri-build = { version = "=2.7.4", optional = true }

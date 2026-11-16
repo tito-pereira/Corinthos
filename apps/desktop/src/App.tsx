@@ -14,6 +14,7 @@ import {
 import { Agents } from "./Agents";
 import { Command } from "./Command";
 import { ContextAudit } from "./ContextAudit";
+import { DirectorySelection } from "./DirectorySelection";
 import { ProjectOverview, ProjectValidation } from "./ProjectDetail";
 import { RepositoryImport } from "./RepositoryImport";
 import { Providers, ProviderSettings } from "./ProviderSettings";
@@ -125,6 +126,8 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   const [listError, setListError] = useState("");
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
+  const [pickerPending, setPickerPending] = useState(false);
+  const pickerBusy = useRef(false);
   const [openError, setOpenError] = useState("");
   const [creationFields, setCreationFields] = useState({ name: "", root: "" });
   const [showPlanning, setShowPlanning] = useState(false);
@@ -142,6 +145,11 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     (project.storage === "CURRENT" || project.storage === "ABSENT") && methods.includes("work.tree"));
   const canViewValidation = Boolean(project?.initialized && methods.includes("command.project"));
   const listRequest = useRef(0);
+
+  function pickingChanged(pending: boolean) {
+    pickerBusy.current = pending;
+    setPickerPending(pending);
+  }
 
   async function loadProjects(target: number) {
     if (!canList) return;
@@ -177,7 +185,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }
 
   async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
-    if (!path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    if (pickerBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
     const request = ++openRequest.current;
     navigation.current += 1;
     setOpening(true);
@@ -214,6 +222,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pickerBusy.current) return;
     if (!creation.shown) {
       void openProject(root, true);
       return;
@@ -277,7 +286,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
             <RegistryEntry
               key={entry.root}
               entry={entry}
-              busy={opening || creation.pending || (entry.availability === "AVAILABLE" && !canOpen)}
+              busy={opening || creation.pending || pickerPending || (entry.availability === "AVAILABLE" && !canOpen)}
               inspect={canInspect}
               open={(path, explicit) => void openProject(path, explicit)}
             />
@@ -289,7 +298,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
             <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
           )}
         </div>}
-        {screen === "Home" && <button type="button" disabled={!canCreate || opening || creation.pending}
+        {screen === "Home" && <button type="button" disabled={!canCreate || opening || creation.pending || pickerPending}
           onClick={() => {
             setCreationFields({ name: "", root: "" });
             onCreation((previous) => ({ ...previous, shown: true }));
@@ -299,7 +308,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
             <h3>Create new project</h3>
             <p>The name is application metadata. Creation preserves existing files and prepares only private Corinthos state.</p>
             <label htmlFor="project-name">Project name</label>
-            <input id="project-name" value={creation.name} maxLength={256} required disabled={creation.pending}
+            <input id="project-name" value={creation.name} maxLength={256} required disabled={creation.pending || pickerPending}
               aria-invalid={Boolean(creationFields.name)} aria-describedby={creationFields.name ? "project-name-error" : undefined}
               onChange={(event) => {
                 const name = event.target.value;
@@ -308,23 +317,17 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
               }} />
             {creationFields.name && <p id="project-name-error" role="alert">{creationFields.name}</p>}
           </>}
-          <label htmlFor="project-root">Project root</label>
+          <DirectorySelection id="project-root" label="Project root" value={root}
+            context={`${screen}:${creation.shown}:${creation.name}`}
+            disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || pickerPending}
+            invalid={Boolean(creation.shown && creationFields.root)}
+            describedBy={creation.shown && creationFields.root ? "project-root-error" : undefined}
+            onPickingChange={pickingChanged} onChange={(path) => {
+              setRoot(path);
+              setCreationFields((previous) => ({ ...previous, root: "" }));
+            }} />
           <div className="field-row">
-            <input
-              id="project-root"
-              value={root}
-              onChange={(event) => {
-                setRoot(event.target.value);
-                setCreationFields((previous) => ({ ...previous, root: "" }));
-              }}
-              placeholder="Enter a local directory path"
-              maxLength={4096}
-              disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending}
-              aria-invalid={Boolean(creation.shown && creationFields.root)}
-              aria-describedby={creation.shown && creationFields.root ? "project-root-error" : undefined}
-              required
-            />
-            <button type="submit" disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || (!creation.shown && !root.trim())}>
+            <button type="submit" disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || pickerPending || (!creation.shown && !root.trim())}>
               {creation.shown ? creation.outcome === "uncertain" || creation.outcome === "failed" ? "Retry creation" : "Create project" : "Open project"}
             </button>
             {creation.shown && <button type="button" className="secondary" onClick={() => {
@@ -343,7 +346,8 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
         {openError && <p role="alert">{openError}</p>}
         {methods.includes("import.inspect") && <RepositoryImport
           canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
-          canOpen={canOpen} disabled={opening || creation.pending}
+          canOpen={canOpen} disabled={opening || creation.pending || pickerPending}
+          selectionContext={`${screen}:${creation.shown}`} onPickingChange={pickingChanged}
           onOpen={async (importedRoot) => {
             if (canOpen) await openProject(importedRoot, true);
             else await loadProjects(0);

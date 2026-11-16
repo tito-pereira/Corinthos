@@ -470,6 +470,112 @@ describe("desktop external repository import", () => {
   });
 });
 
+describe("native folder selection across project flows", () => {
+  const selected = "C:\\Projects\\Olá world";
+  let pick: () => Promise<string | null>;
+  let settle: (() => void) | undefined;
+  const discovery: ImportDiscovery = {
+    root: selected, label: "DISCOVERED", object_format: "sha256", head: "c".repeat(64), branch: "main",
+    dirty: true, commit_allowed: true, existing_state: false, tracked_count: 1,
+    languages: {}, manifests: [], docs: [], tests: [], candidates: [], exclusions: [],
+    ambiguities: [{ code: "DIRTY_TRACKED", explanation: "Review changes.", required: true, options: [] }],
+    discovery_digest: "d".repeat(64),
+  };
+
+  beforeEach(() => {
+    settle = undefined;
+    pick = async () => selected;
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "select_project_directory") return pick();
+      if (command === "backend_snapshot") return { ...ready, handshake: {
+        ...ready.handshake, methods: [...methods, "project.create", "import.inspect", "import.commit"],
+      } };
+      switch (payload?.method) {
+        case "projects.list": return { projects: [], next_offset: null };
+        case "project.create":
+        case "project.open": return { ...summary, root: payload.params.root,
+          display_name: payload.params.display_name ?? "Selected project", work_items: null };
+        case "import.inspect": return { ...discovery, root: payload.params.root };
+        default: throw new Error("Unexpected method");
+      }
+    });
+  });
+
+  afterEach(async () => { await act(async () => settle?.()); });
+
+  async function select(importing = false) {
+    const label = importing ? "Select folder for local repository path" : "Select folder for project root";
+    await act(async () => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
+  }
+
+  const operations = () => invoke.mock.calls.filter(([command]) => command === "workspace_request")
+    .map(([, args]) => args.method);
+
+  it.each(["Open", "Create", "Import"])("fills the %s draft and waits for its explicit action", async (flow) => {
+    await render();
+    if (flow === "Create") {
+      await click("Create new project");
+      await field("#project-name", "Chosen name");
+    }
+    await select(flow === "Import");
+    expect(host.querySelector<HTMLInputElement>(flow === "Import" ? "#import-root" : "#project-root")!.value).toBe(selected);
+    expect(host.textContent).toContain(selected);
+    expect(operations()).toEqual(["projects.list"]);
+    await click(flow === "Import" ? "Inspect repository" : flow === "Create" ? "Create project" : "Open project");
+    const method = flow === "Import" ? "import.inspect" : flow === "Create" ? "project.create" : "project.open";
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method,
+      params: flow === "Create" ? { root: selected, display_name: "Chosen name" } : { root: selected },
+    }]);
+  });
+
+  it("preserves import review on cancel and invalidates it when a different folder is selected", async () => {
+    await render();
+    await select(true);
+    await click("Inspect repository");
+    await act(async () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]')!.click());
+    const checkbox = () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]');
+    expect(checkbox()!.checked).toBe(true);
+    pick = async () => null;
+    await select(true);
+    expect(checkbox()!.checked).toBe(true);
+    expect(host.querySelector<HTMLInputElement>("#import-root")!.value).toBe(selected);
+    pick = async () => "C:\\different";
+    await select(true);
+    expect(host.querySelector(".import-preview")).toBeNull();
+    expect(host.querySelector<HTMLInputElement>("#import-root")!.value).toBe("C:\\different");
+    expect(operations()).toEqual(["projects.list", "import.inspect"]);
+  });
+
+  it("disables submissions and cross-flow picking while a native dialog is outstanding", async () => {
+    let finish: (value: string | null) => void = () => {};
+    pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
+    await render();
+    await field("#project-root", "C:\\original");
+    await field("#import-root", "C:\\repository");
+    await select();
+    await select(true);
+    await act(async () => {
+      host.querySelectorAll("form").forEach((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    });
+    expect(invoke.mock.calls.filter(([command]) => command === "select_project_directory")).toHaveLength(1);
+    expect(operations()).toEqual(["projects.list"]);
+    await act(async () => finish(null));
+    expect(host.querySelector<HTMLInputElement>("#project-root")!.value).toBe("C:\\original");
+  });
+
+  it("ignores folder selection after navigating away and returning", async () => {
+    let finish: (value: string | null) => void = () => {};
+    pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
+    await render();
+    await select();
+    await click("Command");
+    await act(async () => finish(selected));
+    await click("Home");
+    expect(host.querySelector<HTMLInputElement>("#project-root")!.value).toBe("");
+    expect(operations()).toEqual(["projects.list"]);
+  });
+});
+
 describe("desktop Command and project navigation", () => {
   const secondRoot = "C:\\second";
   const projection: ContextProjection = {

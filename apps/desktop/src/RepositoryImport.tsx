@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { useRef, useState, type FormEvent } from "react";
 import { bridge, type ImportDiscovery, type ImportResult } from "./bridge";
+import { DirectorySelection } from "./DirectorySelection";
 
 const importErrors: Record<string, string> = {
   REPOSITORY_CHANGED: "The repository changed after inspection. Inspect it again before importing.",
@@ -18,11 +19,13 @@ function Observations({ label, values }: { label: string; values: string[] }) {
   </div>;
 }
 
-export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled, onOpen }: {
+export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled, selectionContext, onPickingChange, onOpen }: {
   canCommit: boolean;
   canCheckStatus: boolean;
   canOpen: boolean;
   disabled: boolean;
+  selectionContext: string;
+  onPickingChange: (pending: boolean) => void;
   onOpen: (root: string) => Promise<void>;
 }) {
   const [path, setPath] = useState("");
@@ -33,6 +36,7 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
+  const pickerBusy = useRef(false);
   const busy = disabled || pending;
   const confirmed = preview?.ambiguities.every((entry) => !entry.required || confirmations.includes(entry.code));
   const canConfirmImport = preview?.commit_allowed && canCommit && !result &&
@@ -49,7 +53,7 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
 
   async function inspect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || submitting.current || !path.trim()) return;
+    if (busy || pickerBusy.current || submitting.current || !path.trim()) return;
     submitting.current = true;
     clearReview();
     setPending(true);
@@ -68,7 +72,7 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
   }
 
   async function commit() {
-    if (!preview || !canConfirmImport || busy || submitting.current || !confirmed) return;
+    if (!preview || !canConfirmImport || busy || pickerBusy.current || submitting.current || !confirmed) return;
     submitting.current = true;
     setError("");
     setPending(true);
@@ -99,12 +103,15 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
   return <section className="repository-import" aria-labelledby="repository-import-title">
     <h3 id="repository-import-title">Import existing repository</h3>
     <form onSubmit={(event) => void inspect(event)}>
-      <label htmlFor="import-root">Local repository path</label>
-      <div className="field-row">
-        <input id="import-root" value={path} maxLength={4096} required disabled={busy} onChange={(event) => {
-          setPath(event.target.value);
+      <DirectorySelection id="import-root" label="Local repository path" value={path}
+        context={selectionContext} disabled={busy} onPickingChange={(pending) => {
+          pickerBusy.current = pending;
+          onPickingChange(pending);
+        }} onChange={(selected) => {
+          setPath(selected);
           clearReview();
         }} />
+      <div className="field-row">
         <button type="submit" disabled={busy || !path.trim()}>Inspect repository</button>
       </div>
     </form>
