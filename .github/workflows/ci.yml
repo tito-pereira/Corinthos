@@ -279,8 +279,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Rust bridge supervision
         run: |
-          $env:CORINTHOS_SIDECAR_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
+          $ErrorActionPreference = 'Stop'
+          $pythonExe = (Get-Command python.exe -ErrorAction Stop).Source
+          & $pythonExe -m pip install .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $pythonExe -I -B -X utf8 -c "import corinthos.application.sidecar"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:CORINTHOS_SIDECAR_TEST_PYTHON = $pythonExe
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build the WebView test observer
         run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release --features desktop-smoke,custom-protocol
       - name: Verify desktop Projects, Agents and Context with the private Python runtime
