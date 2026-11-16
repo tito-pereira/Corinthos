@@ -286,6 +286,10 @@ jobs:
           & $pythonExe -I -B -X utf8 -c "import corinthos.application.sidecar"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:CORINTHOS_SIDECAR_TEST_PYTHON = $pythonExe
+          $testTemp = Join-Path $env:GITHUB_WORKSPACE 'build\feature-verification\ci-project-creation\temp'
+          New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
+          $env:TEMP = $testTemp
+          $env:TMP = $testTemp
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build the WebView test observer

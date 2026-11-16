@@ -194,6 +194,39 @@ fn creation_errors_forward_only_known_recovery_codes() {
     }
 }
 
+fn creation_diagnostic(directory: &Path, attempts: usize) -> io::Result<std::process::Output> {
+    let fresh = directory.with_file_name(format!(
+        "corinthos-creation-diagnostic-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    let mut command = python_command(&fixture_python(), &["-c", r#"
+import faulthandler, json, os, stat, sys
+from pathlib import Path
+faulthandler.dump_traceback_later(15, exit=True)
+root = Path(sys.argv[1])
+root.mkdir()
+project, user = root / "new project", root / "user"
+print(json.dumps({"python": sys.executable, "version": sys.version,
+    "project": str(project), "project_resolved": str(project.resolve()),
+    "user": str(user), "user_resolved": str(user.resolve()),
+    "TEMP": os.environ.get("TEMP"), "TMP": os.environ.get("TMP")}), flush=True)
+for path in [*reversed(root.parents), root]:
+    info = path.lstat()
+    print(json.dumps({"path": str(path), "mode": info.st_mode,
+        "attributes": getattr(info, "st_file_attributes", None),
+        "reparse": bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT),
+        "device": info.st_dev, "inode": info.st_ino}), flush=True)
+from corinthos.application.workspace import project_create
+for attempt in range(int(sys.argv[2])):
+    print("creation_attempt:", attempt + 1, flush=True)
+    print(json.dumps(project_create(str(project), "Native creation project")), flush=True)
+"#]);
+    command.arg(&fresh).arg(attempts.to_string());
+    command.env("LOCALAPPDATA", fresh.join("user"));
+    command.env("XDG_STATE_HOME", fresh.join("user"));
+    command.output()
+}
+
 #[test]
 fn creation_uses_the_real_backend_and_preserves_retry_identity() {
     let directory = env::temp_dir().join(format!(
@@ -207,10 +240,20 @@ fn creation_uses_the_real_backend_and_preserves_retry_identity() {
     command.env("XDG_STATE_HOME", directory.join("user"));
     let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT).unwrap();
     assert!(handshake.supports("project.create"));
-    for _ in 0..2 {
+    for attempt in 1..=2 {
         let summary = child.request("project.create", json!({
             "root": project, "display_name": "Native creation project",
-        })).unwrap();
+        })).unwrap_or_else(|error| {
+            match creation_diagnostic(&directory, attempt) {
+                Ok(output) => {
+                    eprintln!("Creation diagnostic exit: {}", output.status);
+                    eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                Err(diagnostic_error) => eprintln!("Could not run creation diagnostic: {diagnostic_error}"),
+            }
+            panic!("Creation attempt {attempt} failed for {project:?}: {error}");
+        });
         assert_eq!(summary["display_name"], "Native creation project");
         assert_eq!(summary["initialized"], true);
         assert_eq!(summary["storage"], "ABSENT");
