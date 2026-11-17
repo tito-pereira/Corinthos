@@ -78,11 +78,21 @@ async function click(label: string) {
 async function field(id: string, value: string) {
   const target = host.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(id);
   if (!target) throw new Error(`Input missing: ${id}`);
+  if (target.matches(":disabled") || target.closest("details:not([open])")) {
+    throw new Error(`Input unavailable: ${id}`);
+  }
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), "value")?.set;
   await act(async () => {
     setter?.call(target, value);
     target.dispatchEvent(new Event(target instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   });
+}
+
+async function openManualPath(id: string) {
+  const details = host.querySelector(id)?.closest("details");
+  if (!details) throw new Error(`Manual path disclosure missing: ${id}`);
+  if (!details.open) await act(async () => details.querySelector("summary")!.click());
+  expect(details.open).toBe(true);
 }
 
 describe("desktop Home and Projects", () => {
@@ -241,6 +251,7 @@ describe("desktop named project creation", () => {
   async function fillCreation() {
     await click("Create new project");
     await field("#project-name", created.display_name);
+    await openManualPath("#project-root");
     await field("#project-root", created.root);
   }
 
@@ -252,6 +263,7 @@ describe("desktop named project creation", () => {
     expect(host.querySelector("#project-name")?.getAttribute("aria-invalid")).toBe("true");
     expect(host.textContent).toContain("Enter a project name.");
     await field("#project-name", created.display_name);
+    await openManualPath("#project-root");
     await field("#project-root", "relative/project");
     await click("Create project");
     expect(host.textContent).toContain("Enter an absolute local directory path.");
@@ -438,6 +450,7 @@ describe("desktop external repository import", () => {
     await render();
     const panel = () => host.querySelector(".repository-import");
     expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("import.inspect");
+    await openManualPath("#import-root");
     await field("#import-root", "C:\\external\\");
     await click("Inspect repository");
     expect(invoke.mock.calls).toEqual([
@@ -546,11 +559,37 @@ describe("native folder selection across project flows", () => {
     expect(operations()).toEqual(["projects.list", "import.inspect"]);
   });
 
+  it("requires manual disclosure activation and rejects disabled path entry without dispatching", async () => {
+    await render();
+    const target = host.querySelector<HTMLInputElement>("#project-root")!;
+    const input = vi.fn();
+    target.addEventListener("input", input);
+    expect(target.closest("details")!.open).toBe(false);
+    await expect(field("#project-root", "C:\\hidden")).rejects.toThrow("Input unavailable");
+    expect(target.value).toBe("");
+    expect(input).not.toHaveBeenCalled();
+    await openManualPath("#project-root");
+    await field("#project-root", "C:\\manual");
+    expect(target.value).toBe("C:\\manual");
+    expect(input).toHaveBeenCalledOnce();
+    let finish: (value: string | null) => void = () => {};
+    pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
+    await select();
+    expect(target.disabled).toBe(true);
+    await expect(field("#project-root", "C:\\disabled")).rejects.toThrow("Input unavailable");
+    expect(target.value).toBe("C:\\manual");
+    expect(input).toHaveBeenCalledOnce();
+    expect(operations()).toEqual(["projects.list"]);
+    await act(async () => finish(null));
+  });
+
   it("disables submissions and cross-flow picking while a native dialog is outstanding", async () => {
     let finish: (value: string | null) => void = () => {};
     pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
     await render();
+    await openManualPath("#project-root");
     await field("#project-root", "C:\\original");
+    await openManualPath("#import-root");
     await field("#import-root", "C:\\repository");
     await select();
     await select(true);

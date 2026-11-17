@@ -67,12 +67,23 @@ describe("shared directory selection", () => {
   it("retains the manual fallback and hides native details after unavailable selection", async () => {
     invoke.mockRejectedValue("private native details");
     await render();
+    const details = host.querySelector("details")!;
+    expect(details.open).toBe(false);
     await select();
     expect(host.textContent).toContain("Folder selection is unavailable or failed");
     expect(host.textContent).not.toContain("private native details");
     expect(host.querySelector("summary")!.textContent).toBe("Enter path manually");
     expect(host.querySelector<HTMLInputElement>("input")!.disabled).toBe(false);
     expect(change).not.toHaveBeenCalled();
+    expect(details.open).toBe(false);
+    await act(async () => details.querySelector("summary")!.click());
+    expect(details.open).toBe(true);
+    const input = host.querySelector<HTMLInputElement>("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "C:\\manual fallback");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(change).toHaveBeenCalledExactlyOnceWith("C:\\manual fallback");
   });
 
   it.each(["path", "flow"])("ignores a late result after the %s changes", async (changed) => {

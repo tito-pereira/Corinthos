@@ -61,6 +61,33 @@ function Set-ProductText([string] $Name, [string] $Text) {
     }
 }
 
+function Open-ProductManualPath {
+    $form = Wait-ProductObservation {
+        Find-ProductControl 'Open project' ([System.Windows.Automation.ControlType]::Group) -Enabled
+    } 'the Open project form'
+    $disclosure = Wait-ProductObservation {
+        $condition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'Enter path manually')
+        foreach ($control in $form.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)) {
+            if ($control.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { return $control }
+        }
+    } 'the project manual-path disclosure'
+    $expand = $null
+    Assert-Smoke ($disclosure.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $expand)) 'The project manual-path disclosure has no expand pattern.'
+    if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) {
+        $expand.Expand()
+    }
+    $null = Wait-ProductObservation {
+        $condition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'Project root')
+        foreach ($control in $form.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)) {
+            if ($control.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { return $control }
+        }
+    } 'the visible, enabled Project root field'
+}
+
 function Select-ProductCodex([string] $Name) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::ComboBox) -Enabled
@@ -169,6 +196,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
             $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
         Write-Host 'Installed desktop replaced the stopped sidecar.'
         Click-ProductButton 'Projects'
+        Open-ProductManualPath
         Set-ProductText 'Project root' $Project
         Click-ProductButton 'Open project'
         $null = Wait-ProductObservation { Find-ProductControl 'Project Summary' } 'the opened project'

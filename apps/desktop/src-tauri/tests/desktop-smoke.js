@@ -24,9 +24,19 @@
   const normalizeWindowsPath = (path) => path.replaceAll("/", "\\").toLowerCase();
 
   const setInput = (field, value) => {
+    if (!field?.matches(":enabled") || field.closest("details:not([open]), [hidden]")) {
+      throw new Error("Cannot edit a hidden or disabled smoke field.");
+    }
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value").set;
     setter.call(field, value);
     field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+  };
+
+  const enterDirectory = (field, value) => {
+    const disclosure = field?.closest("details");
+    if (!disclosure) throw new Error("The directory field has no manual-entry disclosure.");
+    if (!disclosure.open) disclosure.querySelector("summary").click();
+    setInput(field, value);
   };
 
   const buttonNamed = (selector, label) => Array.from(document.querySelectorAll(selector)).find(
@@ -56,7 +66,7 @@
     if (mode !== "import-execute") {
       const form = document.querySelector("#import-root");
       if (!form?.matches(":enabled")) return report("fail [import-preview]");
-      setInput(form, projectRoot);
+      enterDirectory(form, projectRoot);
       if (!(await waitFor(() => formButton("Inspect repository")?.matches(":enabled")))) {
         return report("fail [import-preview]");
       }
@@ -156,7 +166,7 @@
     const create = () => buttonNamed(".work-form button", "Create Work Item");
     const treeItem = (objective) => buttonNamed(".work-items .work-tree button", objective);
     const projectForm = document.querySelector("#project-root");
-    setInput(projectForm, projectRoot);
+    enterDirectory(projectForm, projectRoot);
     const openProject = () => buttonNamed("form button", "Open project");
     if (!(await waitFor(() => openProject()?.matches(":enabled")))) return report("fail [adaptive-open-form]");
     openProject().form.requestSubmit(openProject());
@@ -411,7 +421,7 @@
       return report("fail [create-form]");
     }
     setInput(document.querySelector("#project-name"), "Packaged creation project");
-    setInput(document.querySelector("#project-root"), projectRoot);
+    enterDirectory(document.querySelector("#project-root"), projectRoot);
     const submit = () => buttonNamed("form button", "Create project");
     if (!(await waitFor(() => submit()?.matches(":enabled")))) return report("fail [create-form]");
     submit().form.requestSubmit(submit());

@@ -45,8 +45,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
         Ok("1") => "sessions",
         _ => "passive",
     };
+    let window = window.data_directory(project.parent().ok_or_else(invalid_fixture)?.join("picker-webview"));
     if mode == "picker" {
-        return Ok(window.data_directory(project.parent().ok_or_else(invalid_fixture)?.join("picker-webview")));
+        return Ok(window);
     }
     let script = format!(
         "({})({}, \"{mode}\");",
