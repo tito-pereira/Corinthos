@@ -321,7 +321,7 @@ Existing bounded mandates may authorize dependency-only replans after their
 scope, actor and freshness are verified.
 
 **Save for later and leave** preserves accepted planning choices. Resume with
-`corinthos workflow --root . resume` through the same venv executable. These are
+`corinthos workflow --root . resume` from the project directory. These are
 engineering plans. The authorized E–J continuation adds actual execution,
 recovery, a fixed local task-manager pilot and verifiable release evidence.
 
