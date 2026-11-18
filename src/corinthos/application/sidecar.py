@@ -68,6 +68,12 @@ _V2_OPERATIONS = {
     "project.summary": (workspace.project_summary, ("root",), ()),
     "project.open": (workspace.project_open, ("root",), ()),
     "project.create": (workspace.project_create, ("root", "display_name"), ()),
+    "project.inspect": (workspace.project_inspect, ("root",), ()),
+    "project.open_checked": (
+        workspace.project_open_checked,
+        ("root", "inspection_digest"),
+        ("migrate",),
+    ),
     "work.create": (
         workspace.work_create,
         ("root", "scope_level", "objective", "acceptance_criteria"),
@@ -150,6 +156,7 @@ _MUTATIONS = {
     "handoff.create",
     "project.open",
     "project.create",
+    "project.open_checked",
     "work.create",
     "work.update",
     "work.status",

@@ -24,7 +24,7 @@ from corinthos._paths import windows_component_is_reserved
 from corinthos.adapters.process_control import start_process
 from corinthos.bootstrap import _root
 from corinthos.context.redaction import sanitize_text, secret_path
-from corinthos.contracts import IntegrityError
+from corinthos.contracts import ContractError, IntegrityError
 from corinthos.contracts.artifacts import is_link
 from corinthos.contracts.model import canonical_json
 
@@ -1016,26 +1016,42 @@ def _identity(indexed):
     ).hexdigest()
 
 
+def _repository_metadata(runtime, box, gitdir, object_format):
+    head, branch = _read_ref(gitdir, object_format)
+    indexed = _index(runtime, box, object_format)
+    tree = {}
+    if head is not None:
+        objects = _object_store(gitdir)
+        tree = _entries(
+            _git_command(runtime, box, objects, "ls-tree", "--full-tree", "-r", "-z", head),
+            object_format,
+            tree=True,
+        )
+        _object_store(gitdir)
+    if (head, branch) != _read_ref(gitdir, object_format):
+        _fail("Git HEAD changed during discovery.")
+    return head, branch, indexed, tree
+
+
+def can_inspect(root):
+    """Check supported offline Git metadata without scanning working-tree content."""
+    try:
+        root, gitdir = _root_git(root)
+        runtime = _git_runtime(root)
+        with _isolated_index(root, gitdir, runtime) as (box, _, object_format):
+            _, _, indexed, tree = _repository_metadata(runtime, box, gitdir, object_format)
+        return not any(_managed_state_path(path) for path in indexed.keys() | tree.keys())
+    except (ContractError, OSError, ValueError, RuntimeError, UnicodeError):
+        return False
+
+
 def scan(root):
     """Return one bounded semantic observation of an ordinary local Git worktree."""
     try:
         root, gitdir = _root_git(root)
         runtime = _git_runtime(root)
         with _isolated_index(root, gitdir, runtime) as (box, recorded, object_format):
-            head, branch = _read_ref(gitdir, object_format)
-            indexed = _index(runtime, box, object_format)
-            if head is None:
-                tree = {}
-            else:
-                objects = _object_store(gitdir)
-                tree = _entries(
-                    _git_command(runtime, box, objects, "ls-tree", "--full-tree", "-r", "-z", head),
-                    object_format,
-                    tree=True,
-                )
-                _object_store(gitdir)
-            if (head, branch) != _read_ref(gitdir, object_format):
-                _fail("Git HEAD changed during discovery.")
+            head, branch, indexed, tree = _repository_metadata(runtime, box, gitdir, object_format)
             remaining = MAX_TEXT_BYTES
             files, exclusions, manifests, languages = [], set(), [], Counter()
             for relative, (mode, oid, facts) in sorted(indexed.items()):

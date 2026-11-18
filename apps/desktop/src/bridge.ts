@@ -27,6 +27,15 @@ export interface ProjectStatus {
   schema_version: number | null;
 }
 
+export interface ProjectInspection {
+  root: string;
+  status: "CURRENT" | "MIGRATION_REQUIRED" | "UNMANAGED" | "INCOMPLETE_IMPORT" | "INVALID" | "UNVERIFIED" | "MISSING" | "UNAVAILABLE";
+  reason: string;
+  can_import: boolean;
+  schema_version: number | null;
+  inspection_digest: string | null;
+}
+
 export interface ProjectEntry {
   root: string;
   display_name: string;
@@ -391,6 +400,9 @@ export const bridge = {
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
   project: (root: string, open: boolean) =>
     request<ProjectSummary>(open ? "project.open" : "project.summary", { root }),
+  inspectProject: (root: string) => request<ProjectInspection>("project.inspect", { root }),
+  openInspectedProject: (root: string, inspectionDigest: string, migrate = false) =>
+    request<ProjectSummary>("project.open_checked", { root, inspection_digest: inspectionDigest, migrate }),
   createProject: async (root: string, displayName: string): Promise<ProjectSummary> => {
     try {
       return await request<ProjectSummary>("project.create", { root, display_name: displayName });

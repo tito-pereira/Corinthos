@@ -8,6 +8,21 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
+describe("project onboarding transport", () => {
+  it("binds explicit opening and migration to the inspected root and digest", async () => {
+    const inspection = { root: "C:\\project", status: "CURRENT", inspection_digest: "digest" };
+    invoke.mockResolvedValueOnce(inspection).mockResolvedValueOnce({ root: inspection.root }).mockResolvedValueOnce({ root: inspection.root });
+    expect(await bridge.inspectProject(inspection.root)).toBe(inspection);
+    await bridge.openInspectedProject(inspection.root, inspection.inspection_digest);
+    await bridge.openInspectedProject(inspection.root, inspection.inspection_digest, true);
+    expect(invoke.mock.calls).toEqual([
+      ["workspace_request", { method: "project.inspect", params: { root: inspection.root } }],
+      ["workspace_request", { method: "project.open_checked", params: { root: inspection.root, inspection_digest: "digest", migrate: false } }],
+      ["workspace_request", { method: "project.open_checked", params: { root: inspection.root, inspection_digest: "digest", migrate: true } }],
+    ]);
+  });
+});
+
 describe("native directory selection transport", () => {
   it("returns cancellation separately from a native failure", async () => {
     invoke.mockResolvedValueOnce(null);

@@ -34,6 +34,7 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
     }
     let mode = match env::var("CORINTHOS_DESKTOP_SMOKE_START").as_deref() {
         Ok("picker") => "picker",
+        Ok("picker-small") => "picker-small",
         Ok("create") => "create",
         Ok("adaptive") => "adaptive",
         Ok("adaptive-passive") => "adaptive-passive",
@@ -46,6 +47,9 @@ pub fn with_probe<'a, R: Runtime, M: tauri::Manager<R>>(
         _ => "passive",
     };
     let window = window.data_directory(project.parent().ok_or_else(invalid_fixture)?.join("picker-webview"));
+    if mode == "picker-small" {
+        return Ok(window.inner_size(620.0, 480.0));
+    }
     if mode == "picker" {
         return Ok(window);
     }

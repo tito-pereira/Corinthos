@@ -64,6 +64,10 @@
     const formButton = (label) => buttonNamed(".repository-import button", label);
     const project = () => document.querySelector(".project-result");
     if (mode !== "import-execute") {
+      buttonNamed(".onboarding-choices button", "Import Git repository")?.click();
+      if (!(await waitFor(() => document.querySelector("#import-root")?.matches(":enabled")))) {
+        return report("fail [import-preview]");
+      }
       const form = document.querySelector("#import-root");
       if (!form?.matches(":enabled")) return report("fail [import-preview]");
       enterDirectory(form, projectRoot);
@@ -165,6 +169,10 @@
     const action = (label) => buttonNamed(".adaptive-workflow button", label);
     const create = () => buttonNamed(".work-form button", "Create Work Item");
     const treeItem = (objective) => buttonNamed(".work-items .work-tree button", objective);
+    buttonNamed(".onboarding-choices button", "Open existing project")?.click();
+    if (!(await waitFor(() => document.querySelector("#project-root")?.matches(":enabled")))) {
+      return report("fail [adaptive-open-form]");
+    }
     const projectForm = document.querySelector("#project-root");
     enterDirectory(projectForm, projectRoot);
     const openProject = () => buttonNamed("form button", "Open project");
@@ -516,6 +524,11 @@
     });
     if (!legacyRegistry) return report("fail [registry]");
     projectRow().querySelector("button").click();
+    if (!startSessions) {
+      const migrate = () => buttonNamed(".onboarding-review button", "Migrate and open");
+      if (!(await waitFor(() => migrate()?.matches(":enabled")))) return report("fail [project]");
+      migrate().click();
+    }
 
     const projectShown = await waitFor(() => {
       const project = document.querySelector(".project-result");

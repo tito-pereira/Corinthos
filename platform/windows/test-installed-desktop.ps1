@@ -26,10 +26,25 @@ function Find-ProductControl([string] $Name, $Kind = $null, [switch] $Enabled) {
     } catch [System.Windows.Automation.ElementNotAvailableException] { }
 }
 
+function Show-ProductControl($Control) {
+    if ($Control.Current.IsOffscreen) {
+        $scroll = $null
+        if ($Control.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern, [ref] $scroll)) {
+            $scroll.ScrollIntoView()
+        } else {
+            $Control.SetFocus()
+        }
+    }
+    $null = Wait-ProductObservation {
+        if ($Control.Current.IsEnabled -and !$Control.Current.IsOffscreen) { $Control }
+    } 'the visible, enabled selected control'
+}
+
 function Click-ProductButton([string] $Name) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Button) -Enabled
     } "an enabled $Name button"
+    Show-ProductControl $control
     $invoke = $null
     if ($control.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
         $invoke.Invoke()
@@ -49,6 +64,7 @@ function Set-ProductText([string] $Name, [string] $Text) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::Edit) -Enabled
     } "an enabled $Name field"
+    Show-ProductControl $control
     $value = $null
     if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $value)) {
         $value.SetValue($Text)
@@ -70,28 +86,31 @@ function Open-ProductManualPath {
             [System.Windows.Automation.AutomationElement]::NameProperty, 'Enter path manually')
         foreach ($control in $form.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)) {
             if ($control.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-                $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { return $control }
+                $control.Current.IsEnabled) { return $control }
         }
     } 'the project manual-path disclosure'
+    Show-ProductControl $disclosure
     $expand = $null
     Assert-Smoke ($disclosure.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $expand)) 'The project manual-path disclosure has no expand pattern.'
     if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Collapsed) {
         $expand.Expand()
     }
-    $null = Wait-ProductObservation {
+    $field = Wait-ProductObservation {
         $condition = [System.Windows.Automation.PropertyCondition]::new(
             [System.Windows.Automation.AutomationElement]::NameProperty, 'Project root')
         foreach ($control in $form.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)) {
             if ($control.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
-                $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { return $control }
+                $control.Current.IsEnabled) { return $control }
         }
     } 'the visible, enabled Project root field'
+    Show-ProductControl $field
 }
 
 function Select-ProductCodex([string] $Name) {
     $control = Wait-ProductObservation {
         Find-ProductControl $Name ([System.Windows.Automation.ControlType]::ComboBox) -Enabled
     } "the $Name selector"
+    Show-ProductControl $control
     $expand = $null
     Assert-Smoke ($control.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $expand)) "Installed selector '$Name' has no expand pattern."
     $expand.Expand()
@@ -196,6 +215,7 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
             $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
         Write-Host 'Installed desktop replaced the stopped sidecar.'
         Click-ProductButton 'Projects'
+        Click-ProductButton 'Open existing project'
         Open-ProductManualPath
         Set-ProductText 'Project root' $Project
         Click-ProductButton 'Open project'

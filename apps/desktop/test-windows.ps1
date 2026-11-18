@@ -333,7 +333,7 @@ internal static class ClaudeFixture {
     Invoke-DesktopFixture 'passive'
     Assert-Spike (![IO.File]::Exists($autoLog) -and ![IO.File]::Exists($configuredLog) -and ![IO.File]::Exists($claudeLog)) 'Passive Context, Agents or switch status launched a provider.'
     Assert-Spike ((Get-FileHash -LiteralPath $registry).Hash -eq $registryHash) 'Context or passive Agents rendering rewrote provider state.'
-    Write-Host 'Desktop WebView displayed the migrated v9 project, verified an immutable projection and its redacted source provenance, and inspected legacy Agents without native probes.'
+    Write-Host 'Desktop WebView explicitly migrated and opened the v9 project, verified an immutable projection and its redacted source provenance, and inspected legacy Agents without native probes.'
 
     Invoke-DesktopFixture 'sessions'
     Assert-Spike (![IO.File]::Exists($autoLog) -and [IO.File]::Exists($configuredLog)) 'Explicit sessions did not select only the configured provider.'

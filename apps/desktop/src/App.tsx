@@ -5,6 +5,7 @@ import {
   ProjectCreationError,
   type BackendSnapshot,
   type ProjectEntry,
+  type ProjectInspection,
   type ProjectStatus,
   type ProjectSummary,
   type ProjectTab,
@@ -21,6 +22,8 @@ import { Providers, ProviderSettings } from "./ProviderSettings";
 import { WorkItems } from "./WorkItems";
 
 type Screen = "Home" | "Command" | "Projects" | "Settings";
+type Onboarding = "create" | "open" | "import" | null;
+type ImportDraft = { path: string; uncertain: boolean };
 const screens: Screen[] = ["Home", "Command", "Projects", "Settings"];
 
 type CreationState = {
@@ -106,18 +109,24 @@ function RegistryEntry({ entry, busy, inspect, open }: {
   );
 }
 
-function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate }: {
+function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate, importDraft, onImportDraft }: {
   methods: string[];
   providers: ProviderStatus[];
   onProviders: (value: ProviderStatus[]) => void;
   creation: CreationState;
   onCreation: (update: (value: CreationState) => CreationState) => void;
   onCreate: () => Promise<ProjectSummary | null>;
+  importDraft: ImportDraft;
+  onImportDraft: (update: (value: ImportDraft) => ImportDraft) => void;
 }) {
   const [screen, setScreen] = useState<Screen>("Home");
   const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
-  const root = creation.root;
-  const setRoot = (value: string) => onCreation((previous) => ({ ...previous, root: value }));
+  const [flow, setFlow] = useState<Onboarding>(creation.shown ? "create" : importDraft.uncertain ? "import" : null);
+  const [openRoot, setOpenRoot] = useState("");
+  const root = flow === "create" ? creation.root : openRoot;
+  const [inspection, setInspection] = useState<ProjectInspection | null>(null);
+  const [importMutating, setImportMutating] = useState(false);
+  const [confirmedImport, setConfirmedImport] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
   const [registry, setRegistry] = useState<ProjectEntry[]>([]);
@@ -126,6 +135,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   const [listError, setListError] = useState("");
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
+  const openingBusy = useRef(false);
   const [pickerPending, setPickerPending] = useState(false);
   const pickerBusy = useRef(false);
   const [openError, setOpenError] = useState("");
@@ -136,7 +146,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   const navigation = useRef(0);
   const mounted = useRef(true);
   const canList = methods.includes("projects.list");
-  const canOpen = methods.includes("project.open");
+  const canOpen = methods.includes("project.inspect") && methods.includes("project.open_checked");
   const canCreate = methods.includes("project.create");
   const canInspect = methods.includes("project.summary");
   const canViewAgents = Boolean(project?.initialized && (project.schema_version ?? 0) >= 8 && methods.includes("session.list"));
@@ -180,29 +190,99 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }, []);
 
   function changeScreen(value: Screen) {
+    if (importMutating) return;
     navigation.current += 1;
+    openRequest.current += 1;
+    openingBusy.current = false;
+    setOpening(false);
+    setInspection(null);
     setScreen(value);
   }
 
+  function chooseFlow(value: Onboarding, path?: string) {
+    if (importMutating || pickerBusy.current || creation.pending) return;
+    navigation.current += 1;
+    openRequest.current += 1;
+    openingBusy.current = false;
+    setOpening(false);
+    setInspection(null);
+    setOpenError("");
+    setConfirmedImport(null);
+    setCreationFields({ name: "", root: "" });
+    onCreation((previous) => ({ ...previous, shown: value === "create", ...(value === "create" && path !== undefined ? { root: path } : {}) }));
+    if (value === "open" && path !== undefined) setOpenRoot(path);
+    if (value === "import" && path !== undefined) onImportDraft((previous) => ({ ...previous, path }));
+    setFlow(value);
+  }
+
   async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
-    if (pickerBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    if (pickerBusy.current || openingBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    openingBusy.current = true;
     const request = ++openRequest.current;
     navigation.current += 1;
+    const current = navigation.current;
+    const active = () => mounted.current && request === openRequest.current && current === navigation.current;
     setOpening(true);
     setOpenError("");
+    setInspection(null);
     setProject(null);
     setView(target);
     setScreen("Projects");
     try {
-      const result = await bridge.project(path, explicit);
-      if (explicit) await loadProjects(0);
-      if (request === openRequest.current) setProject(result);
+      let result: ProjectSummary;
+      if (explicit) {
+        setFlow("open");
+        setOpenRoot(path);
+        onCreation((previous) => ({ ...previous, shown: false }));
+        const inspected = await bridge.inspectProject(path);
+        if (!active()) return;
+        if (inspected.status !== "CURRENT" || !inspected.inspection_digest) {
+          setInspection(inspected);
+          return;
+        }
+        result = await bridge.openInspectedProject(inspected.root, inspected.inspection_digest);
+      } else result = await bridge.project(path, false);
+      if (!mounted.current) return;
+      if (explicit) {
+        setCommandVersion((value) => value + 1);
+        await loadProjects(0);
+      }
+      if (active()) {
+        setProject(result);
+        setFlow(null);
+      }
     } catch {
-      if (request === openRequest.current) setOpenError(explicit
-        ? "Could not open this project. Check its private state or inspect the saved entry."
+      if (active()) setOpenError(explicit
+        ? "Could not open this project. Inspect it again; its state may have changed or be unavailable."
         : "Could not inspect this project. Retry from Projects or Command.");
     } finally {
-      if (request === openRequest.current) setOpening(false);
+      if (active()) { openingBusy.current = false; setOpening(false); }
+    }
+  }
+
+  async function migrateProject() {
+    if (!inspection?.inspection_digest || inspection.status !== "MIGRATION_REQUIRED" || openingBusy.current || pickerBusy.current) return;
+    openingBusy.current = true;
+    const selected = inspection;
+    const request = ++openRequest.current;
+    const current = navigation.current;
+    const active = () => mounted.current && request === openRequest.current && current === navigation.current;
+    setOpening(true);
+    setOpenError("");
+    setInspection(null);
+    try {
+      const result = await bridge.openInspectedProject(selected.root, selected.inspection_digest!, true);
+      if (!mounted.current) return;
+      setCommandVersion((value) => value + 1);
+      await loadProjects(0);
+      if (!active()) return;
+      setProject(result);
+      setFlow(null);
+      setScreen("Projects");
+    } catch {
+      if (active()) setOpenError("Migration was not confirmed. Inspect the directory again before retrying.");
+    } finally {
+      if (active()) { openingBusy.current = false; setOpening(false); }
     }
   }
 
@@ -223,10 +303,12 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pickerBusy.current) return;
-    if (!creation.shown) {
+    if (flow === "open") {
+      if (opening || !canOpen) return;
       void openProject(root, true);
       return;
     }
+    if (flow !== "create") return;
     if (creation.pending || opening || !canCreate) return;
     const fields = {
       name: !creation.name.trim() ? "Enter a project name." :
@@ -242,6 +324,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     void onCreate().then(async (result) => {
       if (!result || !mounted.current) return;
       setCommandVersion((value) => value + 1);
+      setFlow(null);
       if (current === navigation.current) {
         setProject(result);
         setView({ tab: "overview" });
@@ -267,7 +350,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     <>
       <nav className="primary-navigation" aria-label="Primary navigation">
         {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
-          onClick={() => changeScreen(name)}>{name}</button>)}
+          disabled={importMutating} onClick={() => changeScreen(name)}>{name}</button>)}
       </nav>
       {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
       {screen === "Settings" && <ProviderSettings methods={methods} root={project?.root}
@@ -277,34 +360,21 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
           <h2 id="projects-title">{screen === "Home" ? "Recent projects" : "Projects"}</h2>
           {screen === "Home" && <button type="button" className="secondary" onClick={() => changeScreen("Command")}>Open Command</button>}
         </div>
-        {!canList && <p>Project browsing is unavailable in this backend.</p>}
-        {loading && canList && <p role="status">Loading projects…</p>}
-        {listError && <p role="alert">{listError} <button disabled={opening} onClick={() => void loadProjects(offset)}>Retry</button></p>}
-        {canList && !loading && !listError && registry.length === 0 && <p>No projects are recorded.</p>}
-        <ul className="project-list">
-          {(screen === "Home" ? registry.slice(0, 5) : registry).map((entry) => (
-            <RegistryEntry
-              key={entry.root}
-              entry={entry}
-              busy={opening || creation.pending || pickerPending || (entry.availability === "AVAILABLE" && !canOpen)}
-              inspect={canInspect}
-              open={(path, explicit) => void openProject(path, explicit)}
-            />
-          ))}
-        </ul>
-        {screen === "Projects" && <div className="field-row">
-          {offset > 0 && <button disabled={loading || opening} onClick={() => void loadProjects(0)}>First projects</button>}
-          {nextOffset !== null && (
-            <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
-          )}
-        </div>}
-        {screen === "Home" && <button type="button" disabled={!canCreate || opening || creation.pending || pickerPending}
-          onClick={() => {
-            setCreationFields({ name: "", root: "" });
-            onCreation((previous) => ({ ...previous, shown: true }));
-          }}>Create new project</button>}
-        <form onSubmit={submit} aria-label={creation.shown ? "Create project" : "Open project"} noValidate={creation.shown}>
-          {creation.shown && <>
+        <div className="onboarding-choices" role="group" aria-label="Project onboarding">
+          <div><button type="button" disabled={!canCreate || opening || creation.pending || pickerPending || importMutating}
+            aria-pressed={flow === "create"} onClick={() => chooseFlow("create")}>Create new project</button>
+            <p>Name a project and prepare private Corinthos state while preserving existing files.</p></div>
+          <div><button type="button" disabled={!canOpen || opening || creation.pending || pickerPending || importMutating}
+            aria-pressed={flow === "open"} onClick={() => chooseFlow("open")}>Open existing project</button>
+            <p>Inspect a directory and open verified Corinthos state, with migration reviewed first.</p></div>
+          <div><button type="button" disabled={!methods.includes("import.inspect") || opening || creation.pending || pickerPending || importMutating}
+            aria-pressed={flow === "import"} onClick={() => chooseFlow("import")}>Import Git repository</button>
+            <p>Review a supported local Git repository before confirming its import.</p></div>
+        </div>
+        {!canOpen && <p>Safe project opening is unavailable in this backend. Reconnect with a current backend.</p>}
+        {(flow === "create" || flow === "open") && <form onSubmit={submit} aria-label={flow === "create" ? "Create project" : "Open project"} noValidate={flow === "create"}>
+          {flow === "open" && <h3>Open existing project</h3>}
+          {flow === "create" && <>
             <h3>Create new project</h3>
             <p>The name is application metadata. Creation preserves existing files and prepares only private Corinthos state.</p>
             <label htmlFor="project-name">Project name</label>
@@ -318,40 +388,93 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
             {creationFields.name && <p id="project-name-error" role="alert">{creationFields.name}</p>}
           </>}
           <DirectorySelection id="project-root" label="Project root" value={root}
-            context={`${screen}:${creation.shown}:${creation.name}`}
-            disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || pickerPending}
-            invalid={Boolean(creation.shown && creationFields.root)}
-            describedBy={creation.shown && creationFields.root ? "project-root-error" : undefined}
+            context={`${screen}:${flow}:${creation.name}`}
+            disabled={(flow === "create" ? !canCreate : !canOpen) || opening || creation.pending || pickerPending}
+            invalid={Boolean(flow === "create" && creationFields.root)}
+            describedBy={flow === "create" && creationFields.root ? "project-root-error" : undefined}
             onPickingChange={pickingChanged} onChange={(path) => {
-              setRoot(path);
+              openRequest.current += 1;
+              setInspection(null);
+              setOpenError("");
+              if (flow === "create") onCreation((previous) => ({ ...previous, root: path }));
+              else setOpenRoot(path);
               setCreationFields((previous) => ({ ...previous, root: "" }));
             }} />
           <div className="field-row">
-            <button type="submit" disabled={(creation.shown ? !canCreate : !canOpen) || opening || creation.pending || pickerPending || (!creation.shown && !root.trim())}>
-              {creation.shown ? creation.outcome === "uncertain" || creation.outcome === "failed" ? "Retry creation" : "Create project" : "Open project"}
+            <button type="submit" disabled={(flow === "create" ? !canCreate : !canOpen) || opening || creation.pending || pickerPending || (flow === "open" && !root.trim())}>
+              {flow === "create" ? creation.outcome === "uncertain" || creation.outcome === "failed" ? "Retry creation" : "Create project" : "Open project"}
             </button>
-            {creation.shown && <button type="button" className="secondary" onClick={() => {
-              navigation.current += 1;
-              onCreation((previous) => ({ ...previous, shown: false }));
-              setCreationFields({ name: "", root: "" });
-            }}>{creation.pending ? "Leave creation" : "Cancel creation"}</button>}
+            <button type="button" className="secondary" disabled={pickerPending} onClick={() => {
+              if (creation.pending) {
+                navigation.current += 1;
+                setFlow(null);
+                onCreation((previous) => ({ ...previous, shown: false }));
+              } else chooseFlow(null);
+            }}>{flow === "create" ? creation.pending ? "Leave creation" : "Cancel creation" : "Cancel"}</button>
           </div>
-          {creation.shown && creationFields.root && <p id="project-root-error" role="alert">{creationFields.root}</p>}
-        </form>
+          {flow === "create" && creationFields.root && <p id="project-root-error" role="alert">{creationFields.root}</p>}
+        </form>}
+        {flow === "open" && inspection && <div className="onboarding-review" role="region" aria-label="Open project review" aria-live="polite">
+          <h3>{inspection.status === "MIGRATION_REQUIRED" ? "Migration required" : inspection.status === "UNMANAGED" ? "Directory is not managed" : inspection.status === "INCOMPLETE_IMPORT" ? "Import recovery required" : "Project cannot be opened"}</h3>
+          <code>{inspection.root}</code><p>{inspection.reason}</p>
+          {inspection.status === "MIGRATION_REQUIRED" && <button type="button" disabled={opening || !inspection.inspection_digest}
+            onClick={() => void migrateProject()}>Migrate and open</button>}
+          {inspection.status === "UNMANAGED" && <>
+            <button type="button" disabled={!canCreate || opening} onClick={() => chooseFlow("create", inspection.root)}>Create project here</button>
+            <button type="button" disabled={!inspection.can_import || !methods.includes("import.inspect") || opening}
+              onClick={() => chooseFlow("import", inspection.root)}>Import Git repository</button>
+            {!inspection.can_import && <p>Import is unavailable because this directory is not a supported local Git repository.</p>}
+          </>}
+          {inspection.status === "INCOMPLETE_IMPORT" && <button type="button" disabled={!methods.includes("import.inspect") || opening}
+            onClick={() => chooseFlow("import", inspection.root)}>Review import recovery</button>}
+        </div>}
         {creation.outcome === "created" && creation.summary && <p role="status">
           Created {creation.summary.display_name}. <button type="button" disabled={opening || creation.pending}
             onClick={() => void openProject(creation.summary!.root, false)}>Inspect created project</button>
         </p>}
         {opening && <p role="status">Opening project…</p>}
         {openError && <p role="alert">{openError}</p>}
-        {methods.includes("import.inspect") && <RepositoryImport
-          canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
-          canOpen={canOpen} disabled={opening || creation.pending || pickerPending}
-          selectionContext={`${screen}:${creation.shown}`} onPickingChange={pickingChanged}
-          onOpen={async (importedRoot) => {
-            if (canOpen) await openProject(importedRoot, true);
-            else await loadProjects(0);
-          }} />}
+        {flow === "import" && <>
+          {importDraft.uncertain && !importMutating && <p role="alert">Import was not confirmed. Inspect the same repository to check its durable state before retrying.</p>}
+          <RepositoryImport path={importDraft.path} onPathChange={(path) => {
+            setConfirmedImport(null);
+            onImportDraft((previous) => ({ ...previous, path }));
+          }}
+            onConfirmed={setConfirmedImport}
+            canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
+            canOpen={canOpen} disabled={opening || creation.pending || pickerPending}
+            selectionContext={`${screen}:${flow}`} onPickingChange={pickingChanged}
+            onMutationChange={(pending, uncertain) => {
+              setImportMutating(pending);
+              onImportDraft((previous) => ({ ...previous, uncertain }));
+            }} onOpen={async (importedRoot) => {
+              if (canOpen) await openProject(importedRoot, true);
+              else await loadProjects(0);
+            }} />
+          <button type="button" className="secondary" disabled={importMutating || pickerPending} onClick={() => chooseFlow(null)}>Cancel import</button>
+        </>}
+        {confirmedImport && <p role="status" className="import-confirmed">CONFIRMED import <code>{confirmedImport}</code></p>}
+        {!canList && <p>Project browsing is unavailable in this backend.</p>}
+        {loading && canList && <p role="status">Loading projects…</p>}
+        {listError && <p role="alert">{listError} <button disabled={opening} onClick={() => void loadProjects(offset)}>Retry</button></p>}
+        {canList && !loading && !listError && registry.length === 0 && <p>No projects are recorded. Choose Create new project, Open existing project or Import Git repository above to get started.</p>}
+        <ul className="project-list">
+          {(screen === "Home" ? registry.slice(0, 5) : registry).map((entry) => (
+            <RegistryEntry
+              key={entry.root}
+              entry={entry}
+              busy={opening || creation.pending || pickerPending || importMutating || (entry.availability === "AVAILABLE" && !canOpen)}
+              inspect={canInspect}
+              open={(path, explicit) => void openProject(path, explicit)}
+            />
+          ))}
+        </ul>
+        {screen === "Projects" && <div className="field-row">
+          {offset > 0 && <button disabled={loading || opening} onClick={() => void loadProjects(0)}>First projects</button>}
+          {nextOffset !== null && (
+            <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
+          )}
+        </div>}
       </section>}
       {screen === "Home" && <section aria-labelledby="provider-title">
         <div className="section-heading"><h2 id="provider-title">Providers</h2><span>Cached status</span></div>
@@ -412,6 +535,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
 }
 
 export function App() {
+  const [importDraft, setImportDraft] = useState<ImportDraft>({ path: "", uncertain: false });
   const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
   const request = useRef(0);
   const creationRequest = useRef(0);
@@ -534,7 +658,7 @@ export function App() {
         <p>{creation.name} <code>{creation.root}</code></p>
       </div>}
       {ready && <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
-        creation={creation} onCreation={setCreation} onCreate={createProject}
+        creation={creation} onCreation={setCreation} onCreate={createProject} importDraft={importDraft} onImportDraft={setImportDraft}
         onProviders={(providers) => setSnapshot((current) => current?.connection === "ready"
           ? { ...current, providers: { providers } } : current)} />}
     </main>

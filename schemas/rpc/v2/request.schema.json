@@ -21,6 +21,32 @@
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
     },
     {
+      "if": { "properties": { "method": { "const": "project.inspect" } } },
+      "then": {
+        "required": ["params"],
+        "properties": { "params": {
+          "type": "object",
+          "properties": { "root": { "$ref": "#/$defs/importRoot" } },
+          "required": ["root"], "additionalProperties": false
+        } }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "project.open_checked" } } },
+      "then": {
+        "required": ["id", "params"],
+        "properties": { "params": {
+          "type": "object",
+          "properties": {
+            "root": { "$ref": "#/$defs/importRoot" },
+            "inspection_digest": { "$ref": "#/$defs/importDigest" },
+            "migrate": { "type": "boolean" }
+          },
+          "required": ["root", "inspection_digest"], "additionalProperties": false
+        } }
+      }
+    },
+    {
       "if": { "properties": { "method": { "const": "project.create" } } },
       "then": {
         "required": ["id", "params"],

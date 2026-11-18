@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/project-inspect-result.schema.json",
+  "type": "object",
+  "properties": {
+    "root": { "$ref": "import-common.schema.json#/$defs/root" },
+    "status": { "enum": ["CURRENT", "MIGRATION_REQUIRED", "UNMANAGED", "INCOMPLETE_IMPORT", "INVALID", "UNVERIFIED", "MISSING", "UNAVAILABLE"] },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "can_import": { "type": "boolean" },
+    "schema_version": { "type": ["integer", "null"], "minimum": 1 },
+    "inspection_digest": { "oneOf": [
+      { "$ref": "import-common.schema.json#/$defs/digest" }, { "type": "null" }
+    ] }
+  },
+  "required": ["root", "status", "reason", "can_import", "schema_version", "inspection_digest"],
+  "additionalProperties": false
+}

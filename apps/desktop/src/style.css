@@ -87,6 +87,16 @@ button:hover:not(:disabled) { background: #173f35; }
 button:disabled, input:disabled, select:disabled, textarea:disabled { opacity: 0.7; cursor: default; }
 :is(input, button, select, textarea):focus-visible { outline: 3px solid #1d7366; outline-offset: 2px; }
 .project-result, form + p { margin-top: 0.7rem; }
+.onboarding-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+.onboarding-choices p { margin-top: 0.3rem; font-size: 0.86rem; }
+.onboarding-choices button[aria-pressed="false"] { background: #fff; color: #22584b; }
+.onboarding-review { margin: 0.65rem 0; }
+.onboarding-review button { margin: 0.4rem 0.4rem 0 0; }
 .project-result .facts { margin-top: 0.35rem; }
 code {
   display: block;

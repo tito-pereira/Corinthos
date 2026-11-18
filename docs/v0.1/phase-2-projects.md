@@ -16,6 +16,34 @@ in access order, including missing roots. Names without explicit metadata fall
 back to directory names. `config.json` and `providers.json` keep
 their separate version and ownership.
 
+## Distinct desktop onboarding
+
+Home and the empty Projects view offer **Create new project**, **Open existing
+project** and **Import Git repository** with a short explanation. The selected
+form appears above recent projects. Each route reuses the shared native folder
+picker and manual path disclosure. Selection and cancellation preserve project
+files and recency until the user submits an explicit operation.
+
+Negotiated v2 `project.inspect` passively classifies an ordinary root. Current
+and initialized bootstrap-only projects use digest-bound `project.open_checked`.
+Supported older schemas and verified `.nukytera` storage require **Migrate and
+open**. Unmanaged roots offer **Create project here**, eligible Git import and
+Cancel. Eligibility uses the import service's bounded offline Git metadata
+checks. Incomplete imports retain their canonical import recovery. Invalid,
+unverified, missing and inaccessible selections return bounded guidance.
+
+Inspection verifies legacy database markers, published documents, references,
+audit records and artifact hashes through the canonical migration checks.
+Explicit mutation rechecks the reviewed digest and directory identities before
+using the existing copy/schema migration helpers. The private
+`onboarding-migration.json` checkpoint binds the preserved source inventory and
+source/target identities. A byte-identical COPIED target can resume after an
+interruption. A crash after schema upgrade and before the COMPLETE checkpoint
+fails closed. Preserve both `.nukytera` and `.corinthos` for verified private-state
+recovery before retrying. Completed migration can retry a failed registration
+through current Open. Checkpoints are application metadata. The target's current
+database is independently verified and all existing contract authority applies.
+
 ## Named private project creation
 
 Desktop Home's **Create new project** accepts a display name and an explicit
@@ -69,8 +97,7 @@ retry the same values. The desktop never automatically repeats this mutation.
 
 Success opens the authoritative returned summary and refreshes registry and
 Command projections. Leaving an in-flight form preserves an inspectable outcome.
-Cancellation before submission performs no creation request. Native selection
-and the broader onboarding redesign remain separate steps. The explicit
+Cancellation before submission performs no creation request. The explicit
 **Continue with Project Manager** action shows the supported terminal command;
 GUI Project Manager draft authoring is unavailable, and the trusted foreground
 approval bridge retains its existing authority.
@@ -181,6 +208,8 @@ RPC, SQLite, contract wire and package versions are independent.
 | `projects.list` | Page of registry entries, including missing roots. |
 | `project.summary`, `project.open` | Derived summary. Explicit open records recency and migrates verified v6. |
 | `project.create` | Named private initialization, retry-safe registration and authoritative summary; identified v2 requests only. |
+| `project.inspect` | Read-only onboarding classification, reason, supported Git eligibility and reviewed-state digest. |
+| `project.open_checked` | Identified v2 requests revalidate current Open or explicitly consented migration, then return registry access and summary. |
 | `work.create`, `work.get`, `work.update`, `work.status` | Create, read or mutate one Work Item. Results include allowed next statuses. |
 | `work.list`, `work.tree`, `work.dependencies` | Paged records, hierarchy and prerequisite IDs. |
 
@@ -192,8 +221,9 @@ previously valid payload invalid requires a new protocol version.
 ## Desktop Home and Projects
 
 The contributor Tauri/React application uses RPC v2 through the Rust
-sidecar bridge. Home shows saved projects and availability. Open a project
-by path or select a registry entry. The project view shows storage, active
+sidecar bridge. Home shows the three onboarding choices above saved projects
+and availability. Open a project by path or select a registry entry, then
+explicitly confirm any required migration. The project view shows storage, active
 identities, Work Item counts and hierarchy. The create form and status control
 write through the same Python Application Layer as the CLI. The UI reloads
 from the backend after a mutation. Rust owns the connection and process lifecycle.

@@ -100,6 +100,20 @@ def project_create(root, display_name):
     return create_project(root, display_name)
 
 
+def project_inspect(root):
+    """Passively classify a desktop onboarding selection."""
+    from .onboarding import inspect_project
+
+    return inspect_project(root)
+
+
+def project_open_checked(root, inspection_digest, *, migrate=False):
+    """Execute a current inspected selection with explicit migration consent."""
+    from .onboarding import open_checked
+
+    return open_checked(root, inspection_digest, migrate=migrate)
+
+
 def _work(root):
     from corinthos.work import WorkService
 

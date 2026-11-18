@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { bridge, type ImportDiscovery, type ImportResult } from "./bridge";
 import { DirectorySelection } from "./DirectorySelection";
 
@@ -19,16 +19,19 @@ function Observations({ label, values }: { label: string; values: string[] }) {
   </div>;
 }
 
-export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled, selectionContext, onPickingChange, onOpen }: {
+export function RepositoryImport({ path, onPathChange, canCommit, canCheckStatus, canOpen, disabled, selectionContext, onPickingChange, onMutationChange, onConfirmed, onOpen }: {
+  path: string;
+  onPathChange: (value: string) => void;
   canCommit: boolean;
   canCheckStatus: boolean;
   canOpen: boolean;
   disabled: boolean;
   selectionContext: string;
   onPickingChange: (pending: boolean) => void;
+  onMutationChange: (pending: boolean, uncertain: boolean) => void;
+  onConfirmed: (digest: string) => void;
   onOpen: (root: string) => Promise<void>;
 }) {
-  const [path, setPath] = useState("");
   const [preview, setPreview] = useState<ImportDiscovery | null>(null);
   const [confirmations, setConfirmations] = useState<string[]>([]);
   const [result, setResult] = useState<Extract<ImportResult, { status: "IMPORTED" }> | null>(null);
@@ -37,6 +40,10 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
   const [error, setError] = useState("");
   const submitting = useRef(false);
   const pickerBusy = useRef(false);
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  const latest = useRef({ path, selectionContext });
+  latest.current = { path, selectionContext };
   const busy = disabled || pending;
   const confirmed = preview?.ambiguities.every((entry) => !entry.required || confirmations.includes(entry.code));
   const canConfirmImport = preview?.commit_allowed && canCommit && !result &&
@@ -51,33 +58,58 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
     setError("");
   }
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; generation.current += 1; };
+  }, []);
+
+  useEffect(() => {
+    generation.current += 1;
+    submitting.current = false;
+    setPending(false);
+    clearReview();
+  }, [path, selectionContext]);
+
+  function operation() {
+    const current = ++generation.current;
+    const selected = { path, selectionContext };
+    return () => mounted.current && generation.current === current &&
+      latest.current.path === selected.path && latest.current.selectionContext === selected.selectionContext;
+  }
+
   async function inspect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || pickerBusy.current || submitting.current || !path.trim()) return;
     submitting.current = true;
+    const active = operation();
     clearReview();
     setPending(true);
     try {
       const discovered = await bridge.importInspect(path.trim());
+      if (!active()) return;
       setPreview(discovered);
       if (discovered.existing_state && canCheckStatus) {
-        setExisting((await bridge.importStatus(discovered.root)).status);
+        const status = await bridge.importStatus(discovered.root);
+        if (active()) setExisting(status.status);
       }
     } catch {
-      setError("Could not inspect the repository. Check that the path is a supported local Git repository.");
+      if (active()) setError("Could not inspect the repository. Check that the path is a supported local Git repository.");
     } finally {
-      submitting.current = false;
-      setPending(false);
+      if (active()) { submitting.current = false; setPending(false); }
     }
   }
 
   async function commit() {
     if (!preview || !canConfirmImport || busy || pickerBusy.current || submitting.current || !confirmed) return;
     submitting.current = true;
+    const active = operation();
+    onMutationChange(true, true);
     setError("");
     setPending(true);
     try {
       const imported = await bridge.importCommit(preview.root, preview.discovery_digest, confirmations.slice().sort());
+      if (!active()) return;
+      onMutationChange(false, false);
       if (imported.status !== "IMPORTED") {
         setPreview(null);
         setConfirmations([]);
@@ -85,30 +117,33 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
         return;
       }
       setResult(imported);
+      onConfirmed(imported.snapshot_digest);
       if (imported.error === "REGISTRY_UNAVAILABLE") {
         setError(importErrors.REGISTRY_UNAVAILABLE);
       } else {
         await onOpen(imported.root);
       }
     } catch {
-      setPreview(null);
-      setConfirmations([]);
-      setError("Could not confirm the import. Inspect the repository again before retrying.");
+      if (active()) {
+        onMutationChange(false, true);
+        setPreview(null);
+        setConfirmations([]);
+        setError("Could not confirm the import. Inspect the repository again before retrying.");
+      }
     } finally {
-      submitting.current = false;
-      setPending(false);
+      if (active()) { submitting.current = false; setPending(false); }
     }
   }
 
   return <section className="repository-import" aria-labelledby="repository-import-title">
     <h3 id="repository-import-title">Import existing repository</h3>
-    <form onSubmit={(event) => void inspect(event)}>
+    <form aria-label="Import repository" onSubmit={(event) => void inspect(event)}>
       <DirectorySelection id="import-root" label="Local repository path" value={path}
         context={selectionContext} disabled={busy} onPickingChange={(pending) => {
           pickerBusy.current = pending;
           onPickingChange(pending);
         }} onChange={(selected) => {
-          setPath(selected);
+          onPathChange(selected);
           clearReview();
         }} />
       <div className="field-row">
@@ -160,9 +195,6 @@ export function RepositoryImport({ canCommit, canCheckStatus, canOpen, disabled,
         Import repository
       </button>}
     </div>}
-    {result && <p role="status" className="import-confirmed">
-      CONFIRMED import <code>{result.snapshot_digest}</code>
-    </p>}
     {result?.error === "REGISTRY_UNAVAILABLE" && canOpen && <button type="button" disabled={busy}
       onClick={() => void onOpen(result.root)}>Retry opening imported project</button>}
   </section>;

@@ -17,6 +17,8 @@ const WORKSPACE_METHODS: &[&str] = &[
     "project.summary",
     "project.open",
     "project.create",
+    "project.inspect",
+    "project.open_checked",
     "import.inspect",
     "import.commit",
     "import.status",
@@ -60,6 +62,33 @@ pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
             }))
     {
         return Err("PROJECT_CREATE_INVALID_INPUT");
+    }
+    if method == "project.inspect"
+        && (params.as_object().is_none_or(|value| value.len() != 1)
+            || !params.get("root").is_some_and(Value::is_string))
+    {
+        return Err("Supply a project directory to inspect.");
+    }
+    if method == "project.open_checked"
+        && (params.as_object().is_none_or(|value| {
+            value
+                .keys()
+                .any(|key| !["root", "inspection_digest", "migrate"].contains(&key.as_str()))
+        }) || !params.get("root").is_some_and(Value::is_string)
+            || !params
+                .get("inspection_digest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+            || params
+                .get("migrate")
+                .is_some_and(|value| !value.is_boolean()))
+    {
+        return Err("Supply a current project inspection.");
     }
     if let Some(root) = params.get("root")
         && !root.as_str().is_some_and(valid_root)
@@ -148,6 +177,36 @@ mod tests {
         ] {
             assert_eq!(validate("project.create", &params), Err("PROJECT_CREATE_INVALID_INPUT"));
         }
+    }
+
+    #[test]
+    fn inspected_open_requires_a_bounded_digest_and_explicit_boolean_consent() {
+        let root = if cfg!(windows) {
+            "C:/project"
+        } else {
+            "/project"
+        };
+        let digest = "a".repeat(64);
+        assert!(validate("project.inspect", &json!({"root": root})).is_ok());
+        assert!(
+            validate(
+                "project.open_checked",
+                &json!({
+                    "root": root, "inspection_digest": digest, "migrate": true
+                })
+            )
+            .is_ok()
+        );
+        for params in [
+            json!({"root": root}),
+            json!({"root": root, "inspection_digest": "bad"}),
+            json!({"root": root, "inspection_digest": "A".repeat(64)}),
+            json!({"root": root, "inspection_digest": digest, "migrate": "true"}),
+            json!({"root": root, "inspection_digest": digest, "extra": true}),
+        ] {
+            assert!(validate("project.open_checked", &params).is_err());
+        }
+        assert!(validate("project.inspect", &json!({"root": root, "migrate": true})).is_err());
     }
 
     #[test]

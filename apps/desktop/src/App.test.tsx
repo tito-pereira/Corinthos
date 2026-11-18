@@ -3,13 +3,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { AgentSession, BackendSnapshot, CommandProjectCard, ContextProjection, FlowView, ImportDiscovery, ProjectEntry, ProjectSummary, ReviewDetails, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
+import type { AgentSession, BackendSnapshot, CommandProjectCard, ContextProjection, FlowView, ImportDiscovery, ImportResult, ProjectEntry, ProjectInspection, ProjectSummary, ReviewDetails, SessionHandoff, SwitchView, WorkItem, WorkScope } from "./bridge";
 
 const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 
-const methods = ["projects.list", "project.summary", "project.open", "work.tree", "work.get", "work.create", "work.status"];
+const methods = ["projects.list", "project.summary", "project.open", "project.inspect", "project.open_checked", "work.tree", "work.get", "work.create", "work.status"];
+const currentInspection = (root: string) => ({ root, status: "CURRENT", reason: "Verified current project.",
+  can_import: false, schema_version: 9, inspection_digest: "e".repeat(64) });
 const ready: Extract<BackendSnapshot, { connection: "ready" }> = {
   connection: "ready",
   handshake: { protocol_version: 2, version: "0.1.0", methods },
@@ -133,8 +135,9 @@ describe("desktop Home and Projects", () => {
     invoke.mockImplementation(async (command, payload) => {
       if (command === "backend_snapshot") return ready;
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: [legacy], next_offset: null };
-        case "project.open":
+        case "project.open_checked":
         case "project.summary":
           return { ...summary, work_items: persisted ? { total: 2, by_scope: { CHANGE: 1 }, by_status: { [persisted.status]: 1 } } : summary.work_items };
         case "work.tree":
@@ -192,6 +195,7 @@ describe("desktop Home and Projects", () => {
     let respond: (value: ProjectSummary) => void = () => {};
     invoke.mockResolvedValueOnce(ready)
       .mockResolvedValueOnce({ projects: [legacy], next_offset: null })
+      .mockResolvedValueOnce(currentInspection(legacy.root))
       .mockReturnValueOnce(new Promise<ProjectSummary>((resolve) => { respond = resolve; }));
     await render();
     await click("Open Project");
@@ -206,8 +210,186 @@ describe("desktop Home and Projects", () => {
     invoke.mockResolvedValueOnce({ ...ready, handshake: { ...ready.handshake, methods: ["future.method"] } });
     await render();
     expect(host.textContent).toContain("Project browsing is unavailable");
-    expect(host.querySelector<HTMLInputElement>("#project-root")?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('[aria-pressed="false"]')?.disabled).toBe(true);
     expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
+  });
+});
+
+describe("distinct project onboarding", () => {
+  function setup(inspect: () => Promise<ProjectInspection> = async () => currentInspection(legacy.root) as ProjectInspection,
+    opened: () => Promise<ProjectSummary> = async () => summary) {
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") return { ...ready, handshake: {
+        ...ready.handshake, methods: [...methods, "project.create", "import.inspect", "import.status"],
+      } };
+      switch (payload.method) {
+        case "projects.list": return { projects: [], next_offset: null };
+        case "project.inspect": return inspect();
+        case "project.open_checked": return opened();
+        default: throw new Error("Unexpected method");
+      }
+    });
+  }
+
+  async function inspectPath() {
+    await click("Open existing project");
+    await openManualPath("#project-root");
+    await field("#project-root", legacy.root);
+    await click("Open project");
+  }
+
+  const mutations = () => invoke.mock.calls.filter(([, args]) =>
+    ["project.create", "project.open", "project.open_checked", "import.commit"].includes(args?.method));
+
+  it("offers three explained routes and mounts only the selected form before recents", async () => {
+    setup();
+    await render();
+    expect(host.querySelectorAll("form")).toHaveLength(0);
+    expect(host.textContent).toContain("Choose Create new project, Open existing project or Import Git repository above");
+    expect(host.querySelectorAll(".onboarding-choices p")).toHaveLength(3);
+    await click("Open existing project");
+    expect(host.querySelector('form[aria-label="Open project"]')).not.toBeNull();
+    await click("Import Git repository");
+    expect(host.querySelectorAll("form")).toHaveLength(1);
+    expect(host.querySelector('form[aria-label="Import repository"]')).not.toBeNull();
+    await click("Create new project");
+    const form = host.querySelector('form[aria-label="Create project"]')!;
+    expect(host.querySelectorAll("form")).toHaveLength(1);
+    expect(form.compareDocumentPosition(host.querySelector(".project-list")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(invoke.mock.calls.map(([, args]) => args?.method).filter(Boolean)).toEqual(["projects.list"]);
+  });
+
+  it("opens verified bootstrap-only state using the exact inspection without migration", async () => {
+    setup(undefined, async () => ({ ...summary, storage: "ABSENT", schema_version: null, active_project: null }));
+    await render();
+    await inspectPath();
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "project.open_checked", params: {
+      root: legacy.root, inspection_digest: "e".repeat(64), migrate: false,
+    } }]);
+    expect(host.querySelector(".project-result")?.textContent).toContain("No database");
+    expect(host.querySelector(".onboarding-review")).toBeNull();
+    expect(mutations().map(([, args]) => args.method)).toEqual(["project.open_checked"]);
+  });
+
+  it("requires explicit migration and discards the reviewed action when its path is edited", async () => {
+    setup(async () => ({ ...currentInspection(legacy.root), status: "MIGRATION_REQUIRED", reason: "Verified supported older schema." }));
+    await render();
+    await inspectPath();
+    expect(host.textContent).toContain("Verified supported older schema.");
+    expect(mutations()).toHaveLength(0);
+    await field("#project-root", "C:\\changed");
+    expect(host.querySelector(".onboarding-review")).toBeNull();
+    await field("#project-root", legacy.root);
+    await click("Open project");
+    await click("Migrate and open");
+    expect(mutations()).toEqual([["workspace_request", { method: "project.open_checked", params: {
+      root: legacy.root, inspection_digest: "e".repeat(64), migrate: true,
+    } }]]);
+  });
+
+  it("requires fresh inspection after rejected migration and exposes no native diagnostic", async () => {
+    setup(async () => ({ ...currentInspection(legacy.root), status: "MIGRATION_REQUIRED", reason: "Older schema." }),
+      async () => { throw new Error("private identity detail"); });
+    await render();
+    await inspectPath();
+    await click("Migrate and open");
+    expect(host.textContent).toContain("Inspect the directory again before retrying");
+    expect(host.textContent).not.toContain("private identity detail");
+    expect(host.querySelector(".onboarding-review")).toBeNull();
+  });
+
+  it("carries an unmanaged directory into Create while requiring name entry and explicit creation", async () => {
+    setup(async () => ({ ...currentInspection(legacy.root), status: "UNMANAGED", reason: "No private state.", inspection_digest: null }));
+    await render();
+    await inspectPath();
+    expect(host.textContent).toContain("not a supported local Git repository");
+    await click("Create project here");
+    expect(host.querySelector<HTMLInputElement>("#project-root")?.value).toBe(legacy.root);
+    expect(host.querySelector<HTMLInputElement>("#project-name")?.value).toBe("");
+    expect(mutations()).toHaveLength(0);
+    await click("Create project");
+    expect(host.textContent).toContain("Enter a project name");
+    await click("Cancel creation");
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it.each(["UNMANAGED", "INCOMPLETE_IMPORT"] as const)("routes %s to explicit import review without discovering automatically", async (status) => {
+    setup(async () => ({ ...currentInspection(legacy.root), status, reason: "Import review required.", can_import: true }));
+    await render();
+    await inspectPath();
+    const review = host.querySelector(".onboarding-review")!;
+    const action = review.querySelector<HTMLButtonElement>(status === "UNMANAGED" ? "button:last-of-type" : "button")!;
+    await act(async () => action.click());
+    expect(host.querySelector<HTMLInputElement>("#import-root")?.value).toBe(legacy.root);
+    expect(host.querySelector(".import-preview")).toBeNull();
+    expect(invoke.mock.calls.map(([, args]) => args?.method)).not.toContain("import.inspect");
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it.each(["INVALID", "UNVERIFIED", "MISSING", "UNAVAILABLE"] as const)("presents the bounded %s decision without opening or offering mutation", async (status) => {
+    setup(async () => ({ ...currentInspection(legacy.root), status, reason: `Bounded ${status} explanation.`, inspection_digest: null }));
+    await render();
+    await inspectPath();
+    expect(host.querySelector(".onboarding-review")?.textContent).toContain(`Bounded ${status} explanation.`);
+    expect(host.querySelectorAll(".onboarding-review button")).toHaveLength(0);
+    await click("Cancel");
+    expect(host.querySelector(".onboarding-review")).toBeNull();
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it("discards a late classification after changing flow and does not dispatch its opening", async () => {
+    let finish: (value: ProjectInspection) => void = () => {};
+    setup(() => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await inspectPath();
+    await click("Cancel");
+    await click("Create new project");
+    await act(async () => finish(currentInspection(legacy.root) as ProjectInspection));
+    expect(host.querySelector('form[aria-label="Create project"]')).not.toBeNull();
+    expect(host.querySelector(".project-result")).toBeNull();
+    expect(host.querySelector(".onboarding-review")).toBeNull();
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it("rejects duplicate forced Open submissions before a pending inspection returns", async () => {
+    let finish: (value: ProjectInspection) => void = () => {};
+    setup(() => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await click("Open existing project");
+    await openManualPath("#project-root");
+    await field("#project-root", legacy.root);
+    await act(async () => {
+      const form = host.querySelector('form[aria-label="Open project"]')!;
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "project.inspect")).toHaveLength(1);
+    await act(async () => finish(currentInspection(legacy.root) as ProjectInspection));
+    expect(mutations()).toHaveLength(1);
+  });
+
+  it("refreshes recents after a sent opening finishes without replacing later navigation", async () => {
+    let finish: (value: ProjectSummary) => void = () => {};
+    setup(undefined, () => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await inspectPath();
+    await click("Home");
+    await act(async () => finish(summary));
+    expect(host.querySelector('[aria-current="page"]')?.textContent).toBe("Home");
+    expect(host.querySelector(".project-result")).toBeNull();
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "projects.list")).toHaveLength(2);
+  });
+
+  it("fails closed when an older backend only advertises the automatic legacy Open method", async () => {
+    invoke.mockImplementation(async (command) => command === "backend_snapshot"
+      ? { ...ready, handshake: { ...ready.handshake, methods: ["projects.list", "project.summary", "project.open"] } }
+      : { projects: [legacy], next_offset: null });
+    await render();
+    expect(host.textContent).toContain("Safe project opening is unavailable");
+    await click("Open existing project");
+    await click("Open Project");
+    expect(host.querySelector('form[aria-label="Open project"]')).toBeNull();
+    expect(mutations()).toHaveLength(0);
   });
 });
 
@@ -231,13 +413,14 @@ describe("desktop named project creation", () => {
         ...ready, handshake: { ...ready.handshake, methods: [...methods, "project.create", "command.overview", "command.project"] },
       };
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: saved ? [entry] : [], next_offset: null };
         case "project.create": {
           const result = await create();
           saved = true;
           return result;
         }
-        case "project.open":
+        case "project.open_checked":
         case "project.summary": return created;
         case "command.overview": return { projects: saved ? [card] : [], next_offset: null };
         case "command.project": return card;
@@ -428,6 +611,104 @@ describe("desktop external repository import", () => {
     discovery_digest: digest,
   };
 
+  function setupImport(inspect = async () => discovery,
+    commit: () => Promise<ImportResult> = async () => ({ root: discovery.root, status: "REJECTED", error: "REPOSITORY_CHANGED" })) {
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return { ...ready, handshake: {
+        ...ready.handshake, methods: [...methods, "project.create", "import.inspect", "import.commit", "import.status"],
+      } };
+      switch (payload.method) {
+        case "projects.list": return { projects: [], next_offset: null };
+        case "import.inspect": return inspect();
+        case "import.commit": return commit();
+        case "import.status": return { root: discovery.root, status: "INCOMPLETE", error: "INCOMPLETE" };
+        case "project.inspect": return currentInspection(discovery.root);
+        case "project.open_checked": return { ...summary, root: discovery.root };
+        default: throw new Error("Unexpected method");
+      }
+    });
+  }
+
+  async function reviewImport() {
+    await click("Import Git repository");
+    await openManualPath("#import-root");
+    await field("#import-root", discovery.root);
+    await click("Inspect repository");
+  }
+
+  it("discards a late import discovery after choosing another flow", async () => {
+    let finish: (value: ImportDiscovery) => void = () => {};
+    setupImport(() => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await reviewImport();
+    await click("Cancel import");
+    await click("Create new project");
+    await act(async () => finish(discovery));
+    expect(host.querySelector('form[aria-label="Create project"]')).not.toBeNull();
+    expect(host.querySelector(".import-preview")).toBeNull();
+    expect(invoke.mock.calls.map(([, args]) => args?.method)).not.toContain("import.commit");
+  });
+
+  it("invalidates a changed repository rejection and requires fresh digest review", async () => {
+    setupImport();
+    await render();
+    await reviewImport();
+    await act(async () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]')!.click());
+    await click("Import repository");
+    expect(host.textContent).toContain("repository changed after inspection");
+    expect(host.querySelector(".import-preview")).toBeNull();
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "import.commit")).toHaveLength(1);
+    expect(invoke.mock.calls.map(([, args]) => args?.method)).not.toContain("project.open_checked");
+  });
+
+  it("keeps a confirmed import recoverable when registration fails and retries only checked opening", async () => {
+    setupImport(undefined, async () => ({ root: discovery.root, status: "IMPORTED", label: "CONFIRMED", project_id: "project-1",
+      discovery_digest: digest, snapshot_digest: snapshot, error: "REGISTRY_UNAVAILABLE" }));
+    await render();
+    await reviewImport();
+    await act(async () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]')!.click());
+    await click("Import repository");
+    expect(host.textContent).toContain("Projects could not save the entry");
+    expect(host.querySelector(".import-confirmed")?.textContent).toContain(snapshot);
+    expect(invoke.mock.calls.map(([, args]) => args?.method)).not.toContain("project.open_checked");
+    await click("Retry opening imported project");
+    expect(host.querySelector(".project-result code")?.textContent).toBe(discovery.root);
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "import.commit")).toHaveLength(1);
+    expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "project.open_checked", params: {
+      root: discovery.root, inspection_digest: "e".repeat(64), migrate: false,
+    } }]);
+  });
+
+  it("retains an uncertain import and its directory across disconnect while blocking abandonment and duplicates", async () => {
+    let finish: (value: ImportResult) => void = () => {};
+    let recovering = false;
+    setupImport(async () => ({ ...discovery, existing_state: recovering }),
+      () => new Promise((resolve) => { finish = resolve; }));
+    await render();
+    await reviewImport();
+    await act(async () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]')!.click());
+    await click("Import repository");
+    await click("Create new project");
+    await click("Cancel import");
+    await click("Command");
+    await click("Import repository");
+    await act(async () => host.querySelector('form[aria-label="Import repository"]')!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })));
+    expect(host.querySelector('form[aria-label="Import repository"]')).not.toBeNull();
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "import.commit")).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([, args]) => args?.method === "import.inspect")).toHaveLength(1);
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await act(async () => finish({ root: discovery.root, status: "REJECTED", error: "INCOMPLETE" }));
+    expect(host.textContent).toContain("Disconnected");
+    recovering = true;
+    await click("Reconnect");
+    expect(host.textContent).toContain("Import was not confirmed");
+    expect(host.querySelector<HTMLInputElement>("#import-root")?.value).toBe(discovery.root);
+    await click("Inspect repository");
+    expect(host.textContent).toContain("previous import is incomplete");
+    expect(invoke.mock.calls.map(([, args]) => args?.method)).not.toContain("project.open_checked");
+  });
+
   it("keeps inspection passive and imports only after explicit ambiguity confirmation", async () => {
     let imported = false;
     invoke.mockImplementation(async (command, payload) => {
@@ -435,13 +716,14 @@ describe("desktop external repository import", () => {
         ...ready.handshake, methods: [...methods, "import.inspect", "import.commit"],
       } };
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: imported ? [repository] : [], next_offset: null };
         case "import.inspect": return discovery;
         case "import.commit":
           imported = true;
           return { root: discovery.root, status: "IMPORTED", label: "CONFIRMED", project_id: "project-1",
             discovery_digest: digest, snapshot_digest: snapshot, error: null };
-        case "project.open": return { ...summary, root: discovery.root, schema_version: 9, display_name: "external",
+        case "project.open_checked": return { ...summary, root: discovery.root, schema_version: 9, display_name: "external",
           active_project: null, active_workflow: null };
         case "work.tree": return { nodes: [], next_offset: null };
         default: throw new Error("Unexpected method");
@@ -450,6 +732,7 @@ describe("desktop external repository import", () => {
     await render();
     const panel = () => host.querySelector(".repository-import");
     expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("import.inspect");
+    await click("Import Git repository");
     await openManualPath("#import-root");
     await field("#import-root", "C:\\external\\");
     await click("Inspect repository");
@@ -475,7 +758,7 @@ describe("desktop external repository import", () => {
     expect(invoke.mock.calls).toContainEqual(["workspace_request", { method: "import.commit", params: {
       root: discovery.root, discovery_digest: digest, confirmations: ["DIRTY_TRACKED"],
     } }]);
-    expect(panel()?.querySelector(".import-confirmed")?.textContent).toContain(snapshot);
+    expect(host.querySelector(".import-confirmed")?.textContent).toContain(snapshot);
     expect(host.querySelector(".project-list")?.textContent).toContain("Open external");
     expect(host.querySelector(".project-result")?.textContent).not.toContain("Project Contract");
     await click("Work");
@@ -504,9 +787,10 @@ describe("native folder selection across project flows", () => {
         ...ready.handshake, methods: [...methods, "project.create", "import.inspect", "import.commit"],
       } };
       switch (payload?.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: [], next_offset: null };
         case "project.create":
-        case "project.open": return { ...summary, root: payload.params.root,
+        case "project.open_checked": return { ...summary, root: payload.params.root,
           display_name: payload.params.display_name ?? "Selected project", work_items: null };
         case "import.inspect": return { ...discovery, root: payload.params.root };
         default: throw new Error("Unexpected method");
@@ -526,8 +810,8 @@ describe("native folder selection across project flows", () => {
 
   it.each(["Open", "Create", "Import"])("fills the %s draft and waits for its explicit action", async (flow) => {
     await render();
+    await click(flow === "Import" ? "Import Git repository" : flow === "Create" ? "Create new project" : "Open existing project");
     if (flow === "Create") {
-      await click("Create new project");
       await field("#project-name", "Chosen name");
     }
     await select(flow === "Import");
@@ -535,14 +819,16 @@ describe("native folder selection across project flows", () => {
     expect(host.textContent).toContain(selected);
     expect(operations()).toEqual(["projects.list"]);
     await click(flow === "Import" ? "Inspect repository" : flow === "Create" ? "Create project" : "Open project");
-    const method = flow === "Import" ? "import.inspect" : flow === "Create" ? "project.create" : "project.open";
+    const method = flow === "Import" ? "import.inspect" : flow === "Create" ? "project.create" : "project.open_checked";
     expect(invoke.mock.calls).toContainEqual(["workspace_request", { method,
-      params: flow === "Create" ? { root: selected, display_name: "Chosen name" } : { root: selected },
+      params: flow === "Create" ? { root: selected, display_name: "Chosen name" } : flow === "Open"
+        ? { root: selected, inspection_digest: "e".repeat(64), migrate: false } : { root: selected },
     }]);
   });
 
   it("preserves import review on cancel and invalidates it when a different folder is selected", async () => {
     await render();
+    await click("Import Git repository");
     await select(true);
     await click("Inspect repository");
     await act(async () => host.querySelector<HTMLInputElement>('.import-preview input[type="checkbox"]')!.click());
@@ -561,6 +847,7 @@ describe("native folder selection across project flows", () => {
 
   it("requires manual disclosure activation and rejects disabled path entry without dispatching", async () => {
     await render();
+    await click("Open existing project");
     const target = host.querySelector<HTMLInputElement>("#project-root")!;
     const input = vi.fn();
     target.addEventListener("input", input);
@@ -587,12 +874,13 @@ describe("native folder selection across project flows", () => {
     let finish: (value: string | null) => void = () => {};
     pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
     await render();
+    await click("Open existing project");
     await openManualPath("#project-root");
     await field("#project-root", "C:\\original");
-    await openManualPath("#import-root");
-    await field("#import-root", "C:\\repository");
     await select();
-    await select(true);
+    await click("Import Git repository");
+    expect(host.querySelector("#import-root")).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Select folder for project root"]')!.disabled).toBe(true);
     await act(async () => {
       host.querySelectorAll("form").forEach((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     });
@@ -606,6 +894,7 @@ describe("native folder selection across project flows", () => {
     let finish: (value: string | null) => void = () => {};
     pick = () => new Promise((resolve) => { finish = resolve; settle = () => resolve(null); });
     await render();
+    await click("Open existing project");
     await select();
     await click("Command");
     await act(async () => finish(selected));
@@ -830,6 +1119,7 @@ describe("desktop provider settings", () => {
         methods: [...methods, "settings.providers", "providers.refresh", "provider.configure", "provider.reset"],
       } };
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: [], next_offset: null };
         case "providers.refresh": return [observed];
         case "provider.configure": return [{ ...observed, configuration: "global", executable: payload.params.executable }];
@@ -893,8 +1183,9 @@ describe("desktop adaptive workflow", () => {
     invoke.mockImplementation(async (command, payload) => {
       if (command === "backend_snapshot") return { ...ready, handshake: { ...ready.handshake, methods: flowMethods } };
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: [legacy], next_offset: null };
-        case "project.open":
+        case "project.open_checked":
         case "project.summary": return { ...summary, schema_version: 9 };
         case "work.tree": return { nodes: [{ ...work, depth: 0 }], next_offset: null };
         case "work.get": return work;
@@ -1008,10 +1299,11 @@ describe("desktop Agents", () => {
           providers: { providers: [codex, { ...codex, provider: "claude" }] } };
       }
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "switch.status":
         case "switch.execute": return switchRequest?.(payload.method);
         case "projects.list": return { projects: [legacy], next_offset: null };
-        case "project.open": return { ...summary, schema_version: 8 };
+        case "project.open_checked": return { ...summary, schema_version: 8 };
         case "work.tree": return { nodes: [{ ...item, depth: 0 }], next_offset: null };
         case "session.list": return { sessions: rows.slice(), next_offset: null };
         case "session.get": return rows.find((row) => row.session_id === payload.params.session_id);
@@ -1257,8 +1549,9 @@ describe("desktop Context audit", () => {
         return { ...ready, handshake: { ...ready.handshake, methods: [...methods, ...contextMethods] } };
       }
       switch (payload.method) {
+        case "project.inspect": return currentInspection(payload.params.root);
         case "projects.list": return { projects: [legacy], next_offset: null };
-        case "project.open": return { ...summary, schema_version: 9 };
+        case "project.open_checked": return { ...summary, schema_version: 9 };
         case "work.tree": return { nodes: [{ ...item, objective: "secret objective must not render", depth: 0 }], next_offset: null };
         case "session.list": return { sessions: [], next_offset: null };
         case "context.list": return { projections: [projection], next_offset: null };
