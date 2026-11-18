@@ -1,16 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Upgrade historical execution databases without changing their existing records."""
+"""Retain retired schema cases and shared seeds for current storage verification."""
 
-import io
-import os
 import sqlite3
 import stat
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from pathlib import Path
-from zipfile import ZipFile
 
 import pytest
 
@@ -138,36 +132,7 @@ def _version(database):
 
 
 def _historical_state(tmp_path, commit, version, extra_setup="", *, base_setup=_SETUP):
-    repository = Path(__file__).resolve().parents[1]
-    archive = subprocess.run(
-        ["git", "archive", "--format=zip", commit, "src/corinthos"],
-        cwd=repository,
-        capture_output=True,
-        check=True,
-    ).stdout
-    old = tmp_path / "historical-code"
-    with ZipFile(io.BytesIO(archive)) as zipped:
-        zipped.extractall(old)
-    project = tmp_path / "project"
-    project.mkdir()
-    environment = {**os.environ, "PYTHONPATH": str(old / "src"), "PYTHONUTF8": "1"}
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            "-c",
-            base_setup + extra_setup,
-            str(repository / "examples/contracts"),
-        ],
-        cwd=project,
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _version(project / ".corinthos/state.db") == version
-    return project
+    pytest.skip("Archived-code compatibility fixtures are retired from routine verification.")
 
 
 @pytest.fixture

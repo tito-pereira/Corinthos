@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Upgrade actual populated v5 code/state; fixture authority is synthetic only."""
+"""Retain retired upgrade cases and verify current populated backup recovery."""
 
 import shutil
 import sqlite3
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
-from test_execution_storage import _EXECUTE_V4, _TABLES_V4, _historical_state, _records, _version
+from test_execution_storage import (
+    _EXECUTE_V4,
+    _SETUP,
+    _TABLES_V4,
+    _historical_state,
+    _records,
+    _version,
+)
 
 from corinthos.contracts import ConflictError, ContractStore, StoreError
 from corinthos.contracts import store as storage
@@ -83,6 +92,17 @@ artifact.write_bytes(b'\x00Actual historical v5 retained artifact\xff')
 @pytest.fixture
 def populated_v5(tmp_path):
     return _historical_state(tmp_path, _BASE_V5, 5, _EXECUTE_V4 + _VALIDATE_REPORT_V5)
+
+
+@pytest.fixture
+def populated_current(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    examples = Path(__file__).resolve().parents[1] / "examples" / "contracts"
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(sys, "argv", [__file__, str(examples)])
+    exec(_SETUP + _EXECUTE_V4 + _VALIDATE_REPORT_V5, {})
+    return project
 
 
 def test_v5_frozen_report_recovers_after_migration_without_relabelling_sources(populated_v5):
@@ -164,8 +184,8 @@ def test_concurrent_v6_openers_preserve_history_and_one_inspected_backup(populat
     assert len(list(database.parent.glob("state.pre-v6-*.db"))) == 1
 
 
-def test_populated_current_backup_restores_history_and_artifacts_in_another_root(populated_v5):
-    store = ContractStore(populated_v5)
+def test_populated_current_backup_restores_history_and_artifacts_in_another_root(populated_current):
+    store = ContractStore(populated_current)
     repository = LifecycleRepository(store)
     record = repository.create(
         "OPERATION",
@@ -176,10 +196,22 @@ def test_populated_current_backup_restores_history_and_artifacts_in_another_root
     repository.project("demo-project", create=True)
     tables = (*_TABLES_V5, "lc_records", "lc_projects", "lc_events")
     before = _records(store.database_path, tables)
-    artifacts = _artifacts(populated_v5)
+    assert all(
+        before[table]
+        for table in (
+            "contracts",
+            "audit_events",
+            "pm_turns",
+            "wf_turns",
+            "wf_execution_events",
+            "val_events",
+        )
+    )
+    artifacts = _artifacts(populated_current)
+    assert artifacts
     backup = store.backup()
     assert _version(backup) == 9 and _records(backup, tables) == before
-    recovered_root = populated_v5.parent / "separate-recovery"
+    recovered_root = populated_current.parent / "separate-recovery"
     private = recovered_root / ".corinthos"
     private.mkdir(parents=True, mode=0o700)
     shutil.copyfile(backup, private / "state.db")

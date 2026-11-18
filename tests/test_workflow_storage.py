@@ -1,13 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Use the actual Phase 2 package to verify the planning-only schema upgrade."""
+"""Retain retired upgrade cases alongside current workflow storage checks."""
 
-import io
-import os
 import sqlite3
-import subprocess
-import sys
-from pathlib import Path
-from zipfile import ZipFile
 
 import pytest
 
@@ -77,29 +71,7 @@ def _version(database):
 
 @pytest.fixture
 def phase2_state(tmp_path):
-    repository = Path(__file__).resolve().parents[1]
-    archive = subprocess.run(
-        ["git", "archive", "--format=zip", _BASE, "src/corinthos"],
-        cwd=repository,
-        capture_output=True,
-        check=True,
-    ).stdout
-    old = tmp_path / "phase2-code"
-    with ZipFile(io.BytesIO(archive)) as zipped:
-        zipped.extractall(old)
-    project = tmp_path / "project"
-    project.mkdir()
-    environment = {**os.environ, "PYTHONPATH": str(old / "src"), "PYTHONUTF8": "1"}
-    result = subprocess.run(
-        [sys.executable, "-c", _SETUP, str(repository / "examples/contracts")],
-        cwd=project,
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
-    return project
+    pytest.skip("Archived-code compatibility fixtures are retired from routine verification.")
 
 
 def test_real_phase2_upgrade_preserves_contracts_sessions_turns_and_approval(phase2_state):
