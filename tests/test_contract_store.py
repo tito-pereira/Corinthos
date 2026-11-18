@@ -4,12 +4,14 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from threading import Barrier, Timer
+from types import SimpleNamespace
 
 import pytest
 
@@ -317,7 +319,9 @@ def test_read_only_write_failure_is_reported_without_partial_state(tmp_path, pro
     assert store.get(ContractRef.from_document(project)) is None
 
 
-@pytest.mark.parametrize("filename", ["state.db", "state.db-journal"])
+@pytest.mark.parametrize(
+    "filename", ["state.db", "state.db-journal", "state.db-wal", "state.db-shm"]
+)
 def test_linked_state_files_cannot_modify_another_project(tmp_path, filename):
     project = tmp_path / "project"
     private = project / ".corinthos"
@@ -332,6 +336,97 @@ def test_linked_state_files_cannot_modify_another_project(tmp_path, filename):
         ContractStore(project)
     assert outside.read_bytes() == b"outside content"
     assert sorted(path.name for path in private.iterdir()) == [filename]
+
+
+@pytest.mark.parametrize("suffix", ["-journal", "-wal", "-shm"])
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("allow_existing", [False, True])
+def test_database_guard_rechecks_unlinked_sidecar_once(
+    tmp_path, monkeypatch, suffix, replacement, allow_existing
+):
+    database = tmp_path / "state.db"
+    sidecar = database.with_name(database.name + suffix)
+    sidecar.touch()
+    original = Path.lstat
+    calls = 0
+
+    def unlinked_sidecar(path, *args, **kwargs):
+        nonlocal calls
+        if path == sidecar:
+            calls += 1
+            if calls == 1:
+                info = original(path)
+                path.unlink()
+                if replacement:
+                    path.touch()
+                # Replay Linux lstat completing after SQLite unlinked its journal.
+                return SimpleNamespace(st_mode=info.st_mode, st_nlink=0)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", unlinked_sidecar)
+    if replacement and not allow_existing:
+        with pytest.raises(ConflictError, match="backup already exists"):
+            storage._check_database_files(database, allow_existing=allow_existing)
+    else:
+        storage._check_database_files(database, allow_existing=allow_existing)
+    assert calls == 2
+
+
+@pytest.mark.parametrize("suffix", ["", "-journal", "-wal", "-shm"])
+@pytest.mark.parametrize(
+    ("mode", "links", "attributes"),
+    [
+        (stat.S_IFREG, 0, 0),
+        (stat.S_IFREG, 2, 0),
+        (stat.S_IFDIR, 0, 0),
+        (stat.S_IFLNK, 0, 0),
+        (stat.S_IFREG, 0, stat.FILE_ATTRIBUTE_REPARSE_POINT),
+    ],
+)
+def test_database_guard_rejects_persistent_unsafe_files(
+    tmp_path, monkeypatch, suffix, mode, links, attributes
+):
+    database = tmp_path / "state.db"
+    unsafe = database.with_name(database.name + suffix)
+    original = Path.lstat
+    calls = 0
+
+    def unsafe_stat(path, *args, **kwargs):
+        nonlocal calls
+        if path == unsafe:
+            calls += 1
+            return SimpleNamespace(st_mode=mode, st_nlink=links, st_file_attributes=attributes)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", unsafe_stat)
+    with pytest.raises(StoreError, match="unlinked local files"):
+        storage._check_database_files(database)
+    can_recheck = bool(suffix) and mode == stat.S_IFREG and links == attributes == 0
+    assert calls == (2 if can_recheck else 1)
+
+
+@pytest.mark.parametrize("suffix", ["-journal", "-wal", "-shm"])
+def test_database_guard_preserves_sidecar_recheck_io_errors(tmp_path, monkeypatch, suffix):
+    database = tmp_path / "state.db"
+    sidecar = database.with_name(database.name + suffix)
+    original = Path.lstat
+    calls = 0
+    failure = PermissionError("Sidecar recheck failed")
+
+    def unavailable_sidecar(path, *args, **kwargs):
+        nonlocal calls
+        if path == sidecar:
+            calls += 1
+            if calls == 1:
+                return SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=0)
+            raise failure
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", unavailable_sidecar)
+    with pytest.raises(PermissionError) as caught:
+        storage._check_database_files(database)
+    assert caught.value is failure
+    assert calls == 2
 
 
 def test_backup_can_reopen_without_overwriting_existing_snapshot(tmp_path, project):

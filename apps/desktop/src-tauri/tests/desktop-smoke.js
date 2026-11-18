@@ -169,14 +169,16 @@
     const action = (label) => buttonNamed(".adaptive-workflow button", label);
     const create = () => buttonNamed(".work-form button", "Create Work Item");
     const treeItem = (objective) => buttonNamed(".work-items .work-tree button", objective);
-    buttonNamed(".onboarding-choices button", "Open existing project")?.click();
+    const openChoice = () => buttonNamed(".onboarding-choices button", "Open existing project");
+    if (!(await waitFor(() => openChoice()?.matches(":enabled")))) return report("fail [adaptive-open-choice]");
+    openChoice().click();
     if (!(await waitFor(() => document.querySelector("#project-root")?.matches(":enabled")))) {
-      return report("fail [adaptive-open-form]");
+      return report("fail [adaptive-open-input]");
     }
     const projectForm = document.querySelector("#project-root");
     enterDirectory(projectForm, projectRoot);
     const openProject = () => buttonNamed("form button", "Open project");
-    if (!(await waitFor(() => openProject()?.matches(":enabled")))) return report("fail [adaptive-open-form]");
+    if (!(await waitFor(() => openProject()?.matches(":enabled")))) return report("fail [adaptive-open-submit]");
     openProject().form.requestSubmit(openProject());
     if (!(await waitFor(() => {
       const path = text(summary()?.querySelector("code"));

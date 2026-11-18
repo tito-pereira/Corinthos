@@ -313,9 +313,9 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $null = Wait-ProductObservation { Find-ProductControl $objective } 'the retained Work Item after reconnect'
         $null = Wait-ProductObservation { Find-ProductControl $Project } 'the retained project root after reconnect'
         $null = Wait-ProductObservation { Find-ProductControl $work[0].work_item_id } 'the retained selected Work Item identifier after reconnect'
-        $null = Wait-ProductObservation { Find-ProductControl 'Start adaptive workflow' ([System.Windows.Automation.ControlType]::Button) -Enabled } 'the retained selected Work Item view after reconnect'
         Write-Host 'Installed diagnostics remained available offline; reconnect restored the project, Work view and selected Work Item.'
         Select-ProductCodex 'Execution provider'
+        $null = Wait-ProductObservation { Find-ProductControl 'Start adaptive workflow' ([System.Windows.Automation.ControlType]::Button) -Enabled } 'the enabled workflow action after explicit provider selection'
         Click-ProductButton 'Start adaptive workflow'
         $tree = @(Wait-ProductObservation {
             $running = @(Find-ProductProcesses @($Provider))

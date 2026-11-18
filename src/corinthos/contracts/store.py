@@ -843,6 +843,12 @@ def _check_database_files(database: Path, *, allow_existing: bool = True) -> Non
             info = path.lstat()
         except FileNotFoundError:
             continue
+        if suffix and stat.S_ISREG(info.st_mode) and info.st_nlink == 0 and not is_link(info):
+            # SQLite may unlink a sidecar while lstat is completing on Linux.
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or is_link(info):
             raise StoreError("State database files must be regular, unlinked local files.")
         if not allow_existing:
