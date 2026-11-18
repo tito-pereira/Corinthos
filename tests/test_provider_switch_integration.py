@@ -5,12 +5,15 @@ import json
 import sys
 from pathlib import Path
 from time import monotonic, sleep
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from corinthos.adapters import AdapterManager
 from corinthos.bootstrap import initialize
 from corinthos.context import ContextService, HandoffService
+from corinthos.contracts import ConflictError, StoreError
 from corinthos.sessions.repository import SessionRepository
 from corinthos.sessions.supervisor import SessionSupervisor
 from corinthos.sessions.switch import ProviderSwitchService
@@ -138,11 +141,58 @@ def _log(program):
 def _wait_for_source_observations(repository, session_id):
     deadline = monotonic() + 15
     while monotonic() < deadline:
-        events = repository.events(session_id, limit=25)
-        if sum(event.kind == "TOOL_ACTIVITY" for event in events) == 5:
-            return
+        try:
+            events = repository.events(session_id, limit=25)
+        except ConflictError:
+            pass
+        else:
+            if sum(event.kind == "TOOL_ACTIVITY" for event in events) == 5:
+                return
         sleep(0.05)
     pytest.fail("The synthetic source did not emit its bounded observations.")
+
+
+def test_wait_for_source_observations_retries_transient_conflict(monkeypatch):
+    clock = Mock(side_effect=[0, 0, 0.05])
+    pause = Mock()
+    monkeypatch.setattr(sys.modules[__name__], "monotonic", clock)
+    monkeypatch.setattr(sys.modules[__name__], "sleep", pause)
+    observations = [SimpleNamespace(kind="TOOL_ACTIVITY")] * 5
+    repository = SimpleNamespace(events=Mock(side_effect=[ConflictError("busy"), observations]))
+
+    _wait_for_source_observations(repository, "source")
+
+    assert repository.events.call_count == 2
+    repository.events.assert_called_with("source", limit=25)
+    pause.assert_called_once_with(0.05)
+
+
+def test_wait_for_source_observations_times_out_on_persistent_conflict(monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "monotonic", Mock(side_effect=[0, 0, 15]))
+    pause = Mock()
+    monkeypatch.setattr(sys.modules[__name__], "sleep", pause)
+    repository = SimpleNamespace(events=Mock(side_effect=ConflictError("busy")))
+
+    with pytest.raises(pytest.fail.Exception, match="did not emit its bounded observations"):
+        _wait_for_source_observations(repository, "source")
+
+    repository.events.assert_called_once_with("source", limit=25)
+    pause.assert_called_once_with(0.05)
+
+
+def test_wait_for_source_observations_propagates_other_errors(monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "monotonic", Mock(return_value=0))
+    pause = Mock()
+    monkeypatch.setattr(sys.modules[__name__], "sleep", pause)
+    error = StoreError("invalid store")
+    repository = SimpleNamespace(events=Mock(side_effect=error))
+
+    with pytest.raises(StoreError) as raised:
+        _wait_for_source_observations(repository, "source")
+
+    assert raised.value is error
+    repository.events.assert_called_once_with("source", limit=25)
+    pause.assert_not_called()
 
 
 @pytest.mark.parametrize(
