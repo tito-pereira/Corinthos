@@ -327,7 +327,7 @@ def test_verified_legacy_copy_requires_consent_preserves_source_and_reopens(lega
     assert _open(root)["root"] == str(root)
 
 
-@pytest.mark.parametrize("phase", ["copy", "checkpoint", "upgrade", "bootstrap", "complete"])
+@pytest.mark.parametrize("phase", ["copy", "checkpoint", "open", "bootstrap", "complete"])
 def test_interrupted_legacy_phases_preserve_both_stores(legacy_root, monkeypatch, phase):
     root = legacy_root
     original = _inventory(root / ".nukytera")
@@ -354,7 +354,7 @@ def test_interrupted_legacy_phases_preserve_both_stores(legacy_root, monkeypatch
 
     def store(*args):
         value = actual_store(*args)
-        if phase == "upgrade":
+        if phase == "open":
             fail()
         return value
 
@@ -374,7 +374,7 @@ def test_interrupted_legacy_phases_preserve_both_stores(legacy_root, monkeypatch
     assert (root / ".corinthos/state.db").exists()
     assert ProjectRegistryService().paths() == []
     observed = workspace.project_inspect(str(root))
-    if phase in {"copy", "checkpoint"}:
+    if phase in {"copy", "checkpoint", "open"}:
         assert observed["status"] == "MIGRATION_REQUIRED"
         assert _open(root, migrate=True)["schema_version"] == 9
     elif phase == "complete":
