@@ -64,15 +64,17 @@
     const formButton = (label) => buttonNamed(".repository-import button", label);
     const project = () => document.querySelector(".project-result");
     if (mode !== "import-execute") {
-      buttonNamed(".onboarding-choices button", "Import Git repository")?.click();
+      const importChoice = () => buttonNamed(".onboarding-choices button", "Import Git repository");
+      if (!(await waitFor(() => importChoice()?.matches(":enabled")))) return report("fail [import-choice]");
+      importChoice().click();
       if (!(await waitFor(() => document.querySelector("#import-root")?.matches(":enabled")))) {
-        return report("fail [import-preview]");
+        return report("fail [import-input]");
       }
       const form = document.querySelector("#import-root");
-      if (!form?.matches(":enabled")) return report("fail [import-preview]");
+      if (!form?.matches(":enabled")) return report("fail [import-input]");
       enterDirectory(form, projectRoot);
       if (!(await waitFor(() => formButton("Inspect repository")?.matches(":enabled")))) {
-        return report("fail [import-preview]");
+        return report("fail [import-inspect]");
       }
       formButton("Inspect repository").form.requestSubmit(formButton("Inspect repository"));
       if (!(await waitFor(() => {
@@ -85,9 +87,9 @@
           Boolean(valueFor(panel(), "HEAD")) && sha256(valueFor(panel(), "Discovery digest")) &&
           preview.includes("DISCOVERED module candidates") && preview.includes("pyproject.toml") &&
           preview.includes("README.md") && preview.includes("tests/test_payments.py");
-      }, 50_000))) return report("fail [import-preview]");
+      }, 50_000))) return report("fail [import-preview-values]");
       if (importedRow() || !formButton("Import repository")?.disabled) {
-        return report("fail [import-preview]");
+        return report("fail [import-preview-state]");
       }
       if (mode === "import-preview") return report("pass");
       for (const confirmation of panel().querySelectorAll('input[type="checkbox"]')) {
@@ -113,9 +115,12 @@
         valueFor(project(), "Initialized") === "Yes" && valueFor(project(), "Storage") === "Current · v9" &&
         valueFor(project(), "Project Contract") === undefined && valueFor(project(), "Workflow") === undefined;
     }))) return report("fail [import-project]");
-    if (!document.querySelector("#work-objective")) view("Work")?.click();
+    if (!document.querySelector("#work-objective")) {
+      if (!(await waitFor(() => view("Work")?.matches(":enabled")))) return report("fail [import-work]");
+      view("Work").click();
+    }
     if (!(await waitFor(() => document.querySelector("#work-objective")?.matches(":enabled")))) {
-      return report("fail [import-project]");
+      return report("fail [import-work]");
     }
     if (mode === "import-commit") return report("pass");
 
@@ -185,7 +190,10 @@
       return path && normalizeWindowsPath(path) === normalizeWindowsPath(projectRoot);
     }))) return report("fail [adaptive-open-project]");
     if (valueFor(summary(), "Storage") !== "Current · v9") return report("fail [adaptive-storage]");
-    if (!document.querySelector("#work-objective")) view("Work")?.click();
+    if (!document.querySelector("#work-objective")) {
+      if (!(await waitFor(() => view("Work")?.matches(":enabled")))) return report("fail [adaptive-work-view]");
+      view("Work").click();
+    }
     if (!(await waitFor(() => document.querySelector("#work-objective")?.matches(":enabled")))) {
       return report("fail [adaptive-work-view]");
     }
@@ -313,7 +321,8 @@
       return report("pass");
     }
 
-    within(a(), "Open Project")?.click();
+    if (!(await waitFor(() => within(a(), "Open Project")))) return report("fail [command-start]");
+    within(a(), "Open Project").click();
     if (!(await waitFor(() => project(projectRoot) && view("Work")?.matches(":enabled")))) {
       return report("fail [command-start]");
     }
@@ -427,7 +436,8 @@
     if (!(await waitFor(() => text(document.querySelector(".connection[role=status]")) === "Connected" &&
       create()?.matches(":enabled")))) return report("fail [backend]");
     create().click();
-    if (!(await waitFor(() => document.querySelector("#project-name")?.matches(":enabled")))) {
+    if (!(await waitFor(() => document.querySelector("#project-name")?.matches(":enabled") &&
+      document.querySelector("#project-root")?.matches(":enabled")))) {
       return report("fail [create-form]");
     }
     setInput(document.querySelector("#project-name"), "Packaged creation project");
