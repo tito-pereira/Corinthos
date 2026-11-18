@@ -77,6 +77,50 @@ function Set-ProductText([string] $Name, [string] $Text) {
     }
 }
 
+function Set-ProductDiagnostics([bool] $Open) {
+    $disclosure = Wait-ProductObservation {
+        Find-ProductControl 'About / Diagnostics' ([System.Windows.Automation.ControlType]::Button) -Enabled
+    } 'the diagnostics disclosure'
+    Show-ProductControl $disclosure
+    $expand = $null
+    Assert-Smoke ($disclosure.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $expand)) 'The diagnostics disclosure has no expand pattern.'
+    if ($Open) { $expand.Expand() } else { $expand.Collapse() }
+}
+
+function Get-ProductDiagnosticFacts([string] $PrivatePython) {
+    $probe = @'
+import json, platform
+import corinthos
+from corinthos.contracts import ContractStore
+print(json.dumps({'application_version': corinthos.__version__,
+    'private_runtime': platform.python_implementation() + ' ' + platform.python_version(),
+    'schema': 'v' + str(ContractStore.current_schema_version())}))
+'@
+    $facts = (& $PrivatePython -I -B -X utf8 -c $probe) | ConvertFrom-Json
+    Assert-Smoke ($LASTEXITCODE -eq 0) 'Could not read the actual candidate diagnostic facts.'
+    $configuration = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot '..\..\apps\desktop\src-tauri\tauri.conf.json') | ConvertFrom-Json
+    $facts | Add-Member -NotePropertyName desktop_version -NotePropertyValue $configuration.version
+    $facts | Add-Member -NotePropertyName desktop_identifier -NotePropertyValue $configuration.identifier
+    return $facts
+}
+
+function Assert-ProductDiagnostics([string] $State, [switch] $SelectedProject) {
+    Assert-Smoke ($null -ne $script:ProductDiagnosticFacts) 'Read candidate diagnostic facts before observing the UI.'
+    $facts = $script:ProductDiagnosticFacts
+    $expected = @('Application version', 'Desktop version', 'RPC protocol', 'Backend state',
+        'Private runtime', 'Supported storage schema', 'Selected project schema', 'Desktop identifier',
+        $State, $facts.desktop_identifier, $facts.desktop_version)
+    if ($State -eq 'Connected') { $expected += @($facts.application_version, 'v2', $facts.private_runtime, $facts.schema) }
+    if ($SelectedProject -and $State -eq 'Disconnected') { $expected += "$($facts.schema) (last observed)" }
+    $null = Wait-ProductObservation {
+        $section = Find-ProductControl 'Diagnostics' ([System.Windows.Automation.ControlType]::Group)
+        if (!$section) { return }
+        $names = @($section.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name })
+        if (@($expected | Where-Object { $_ -notin $names }).Count -eq 0) { $section }
+    } "explicit $State diagnostics"
+}
+
 function Open-ProductManualPath {
     $form = Wait-ProductObservation {
         Find-ProductControl 'Open project' ([System.Windows.Automation.ControlType]::Group) -Enabled
@@ -192,6 +236,7 @@ function Close-ProductDesktop([string[]] $ChildExecutables) {
 function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython, [string] $Project, [string] $Provider, [string] $ProviderLog) {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
     $script:ProductDesktopId = 0
+    $script:ProductDiagnosticFacts = Get-ProductDiagnosticFacts $PrivatePython
     $providerBefore = if ([IO.File]::Exists($ProviderLog)) { [IO.File]::ReadAllLines($ProviderLog).Length } else { 0 }
     $objective = 'Create the installed desktop fixture'
     $cliObjective = 'Create a second fixture through CLI'
@@ -204,16 +249,6 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         $null = Wait-ProductObservation { Find-ProductControl $projectName } 'the project previously recorded by CLI'
         Write-Host 'Installed Command observed a CLI project.'
         Assert-Smoke (![IO.File]::Exists($ProviderLog) -or [IO.File]::ReadAllLines($ProviderLog).Length -eq $providerBefore) 'Installed Home or Command executed a provider.'
-        $sidecar = @(Find-ProductProcesses @($PrivatePython))
-        Assert-Smoke ($sidecar.Count -eq 1) 'Expected one sidecar before the reconnect test.'
-        Stop-Process -Id $sidecar[0].ProcessId
-        $null = Wait-ProductObservation { Find-ProductControl 'Disconnected' } 'a disconnected state after sidecar exit'
-        Click-ProductButton 'Reconnect'
-        $null = Wait-ProductObservation { Find-ProductControl 'Connected' } 'a new private backend handshake'
-        $replacement = @(Find-ProductProcesses @($PrivatePython))
-        Assert-Smoke ($replacement.Count -eq 1 -and $replacement[0].ProcessId -ne $sidecar[0].ProcessId -and
-            $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
-        Write-Host 'Installed desktop replaced the stopped sidecar.'
         Click-ProductButton 'Projects'
         Click-ProductButton 'Open existing project'
         Open-ProductManualPath
@@ -221,6 +256,9 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         Click-ProductButton 'Open project'
         $null = Wait-ProductObservation { Find-ProductControl 'Project Summary' } 'the opened project'
         Click-ProductButton 'Settings'
+        Set-ProductDiagnostics $true
+        Assert-ProductDiagnostics 'Connected' -SelectedProject
+        Set-ProductDiagnostics $false
         $scope = Wait-ProductObservation {
             Find-ProductControl 'Configure providers for the selected project' ([System.Windows.Automation.ControlType]::CheckBox) -Enabled
         } 'the project provider setting'
@@ -260,6 +298,23 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
         Click-ProductButton 'Refresh Work Items'
         $null = Wait-ProductObservation { Find-ProductControl $cliObjective } 'the Work Item created in the CLI'
         Click-ProductButton $objective
+        $sidecar = @(Find-ProductProcesses @($PrivatePython))
+        Assert-Smoke ($sidecar.Count -eq 1 -and $sidecar[0].ParentProcessId -eq $script:ProductDesktopId) 'Expected one owned sidecar before the reconnect test.'
+        Stop-Process -Id $sidecar[0].ProcessId
+        $null = Wait-ProductObservation { Find-ProductControl 'Disconnected' } 'a disconnected state after sidecar exit'
+        Set-ProductDiagnostics $true
+        Assert-ProductDiagnostics 'Disconnected' -SelectedProject
+        Set-ProductDiagnostics $false
+        Click-ProductButton 'Reconnect'
+        $null = Wait-ProductObservation { Find-ProductControl 'Connected' } 'a new private backend handshake'
+        $replacement = @(Find-ProductProcesses @($PrivatePython))
+        Assert-Smoke ($replacement.Count -eq 1 -and $replacement[0].ProcessId -ne $sidecar[0].ProcessId -and
+            $replacement[0].ParentProcessId -eq $script:ProductDesktopId) 'Reconnect did not create one new owned private sidecar.'
+        $null = Wait-ProductObservation { Find-ProductControl $objective } 'the retained Work Item after reconnect'
+        $null = Wait-ProductObservation { Find-ProductControl $Project } 'the retained project root after reconnect'
+        $null = Wait-ProductObservation { Find-ProductControl $work[0].work_item_id } 'the retained selected Work Item identifier after reconnect'
+        $null = Wait-ProductObservation { Find-ProductControl 'Start adaptive workflow' ([System.Windows.Automation.ControlType]::Button) -Enabled } 'the retained selected Work Item view after reconnect'
+        Write-Host 'Installed diagnostics remained available offline; reconnect restored the project, Work view and selected Work Item.'
         Select-ProductCodex 'Execution provider'
         Click-ProductButton 'Start adaptive workflow'
         $tree = @(Wait-ProductObservation {

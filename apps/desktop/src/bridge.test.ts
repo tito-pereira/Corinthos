@@ -8,6 +8,13 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
+it("requests passive runtime diagnostics with an empty typed parameter object", async () => {
+  const diagnostics = { python_implementation: "CPython", python_version: "3.14.10", supported_schema_version: 9 };
+  invoke.mockResolvedValueOnce(diagnostics);
+  expect(await bridge.diagnostics()).toBe(diagnostics);
+  expect(invoke.mock.calls).toEqual([["workspace_request", { method: "system.diagnostics", params: {} }]]);
+});
+
 describe("project onboarding transport", () => {
   it("binds explicit opening and migration to the inspected root and digest", async () => {
     const inspection = { root: "C:\\project", status: "CURRENT", inspection_digest: "digest" };

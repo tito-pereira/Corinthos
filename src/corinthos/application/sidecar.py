@@ -10,6 +10,7 @@ from corinthos.application import (
     adaptive,
     command,
     context,
+    diagnostics,
     external_import,
     project_status,
     providers_status,
@@ -42,6 +43,7 @@ _WORK_CONTENT = (
     "depends_on",
 )
 _V2_OPERATIONS = {
+    "system.diagnostics": (diagnostics, (), ()),
     "command.overview": (command.command_overview, (), _PAGE_OPTIONS),
     "command.project": (command.command_project, ("root",), ()),
     "settings.providers": (settings.settings_providers, (), ("root",)),

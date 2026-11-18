@@ -4,6 +4,7 @@
 use serde_json::Value;
 
 const WORKSPACE_METHODS: &[&str] = &[
+    "system.diagnostics",
     "command.overview",
     "command.project",
     "settings.providers",
@@ -53,6 +54,9 @@ const WORKSPACE_METHODS: &[&str] = &[
 pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
     if !WORKSPACE_METHODS.contains(&method) || !params.is_object() {
         return Err("That workspace operation is unavailable.");
+    }
+    if method == "system.diagnostics" && params.as_object().is_none_or(|value| !value.is_empty()) {
+        return Err("Diagnostics does not accept parameters.");
     }
     if method == "project.create"
         && (params.as_object().is_none_or(|value| value.len() != 2)
@@ -119,6 +123,13 @@ pub(crate) fn valid_root(root: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn diagnostics_admits_only_an_empty_projection_request() {
+        assert!(validate("system.diagnostics", &json!({})).is_ok());
+        assert!(validate("system.diagnostics", &json!({"root": "/project"})).is_err());
+        assert!(validate("system.diagnostics", &json!([])).is_err());
+    }
 
     #[test]
     fn workspace_allowlist_matches_typed_frontend_operations() {

@@ -14,6 +14,7 @@ const currentInspection = (root: string) => ({ root, status: "CURRENT", reason: 
   can_import: false, schema_version: 9, inspection_digest: "e".repeat(64) });
 const ready: Extract<BackendSnapshot, { connection: "ready" }> = {
   connection: "ready",
+  desktop: { version: "0.1.0", identifier: "org.corinthos.desktop" },
   handshake: { protocol_version: 2, version: "0.1.0", methods },
   providers: { providers: [{
     provider: "codex", supported: true, configuration: "default", executable: null,
@@ -97,6 +98,21 @@ async function openManualPath(id: string) {
   expect(details.open).toBe(true);
 }
 
+async function openDiagnostics() {
+  const details = host.querySelector<HTMLDetailsElement>("details.diagnostics");
+  if (!details) throw new Error("Diagnostics disclosure missing");
+  if (!details.open) await act(async () => {
+    details.querySelector("summary")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(details.open).toBe(true);
+}
+
+function diagnostic(label: string) {
+  return Array.from(host.querySelectorAll(".diagnostics dt"))
+    .find((term) => term.textContent === label)?.nextElementSibling?.textContent;
+}
+
 describe("desktop Home and Projects", () => {
   it("loads known and missing projects passively once the backend negotiates v2", async () => {
     let respond: (value: BackendSnapshot) => void = () => {};
@@ -105,8 +121,8 @@ describe("desktop Home and Projects", () => {
     await render();
     expect(host.textContent).toContain("Connecting");
     await act(async () => respond(ready));
-    expect(host.textContent).toContain("0.1.0");
-    expect(host.textContent).toContain("v2");
+    expect(host.textContent).not.toContain("0.1.0");
+    expect(host.querySelector("#backend-title")).toBeNull();
     expect(host.textContent).toContain("Not yet observed");
     expect(host.textContent).toContain("Older schema · v6");
     expect(host.textContent).toContain("Inspect Missing project");
@@ -212,6 +228,283 @@ describe("desktop Home and Projects", () => {
     expect(host.textContent).toContain("Project browsing is unavailable");
     expect(host.querySelector<HTMLButtonElement>('[aria-pressed="false"]')?.disabled).toBe(true);
     expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
+  });
+});
+
+describe("backend status and diagnostics", () => {
+  const runtime = { python_implementation: "CPython", python_version: "3.14.10", supported_schema_version: 9 };
+  const diagnosticReady = { ...ready, handshake: { ...ready.handshake, methods: [...methods, "system.diagnostics"] } };
+
+  it("reads runtime details only through explicit Settings diagnostics", async () => {
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") return diagnosticReady;
+      if (payload.method === "projects.list") return { projects: [], next_offset: null };
+      if (payload.method === "system.diagnostics") return runtime;
+      throw new Error("Unexpected operation");
+    });
+    await render();
+    expect(host.querySelector("#backend-title")).toBeNull();
+    expect(host.textContent).not.toContain("Application version");
+    expect(invoke.mock.calls).toHaveLength(2);
+    await click("Settings");
+    expect(host.textContent).not.toContain("Application version");
+    await openDiagnostics();
+    expect(diagnostic("Application version")).toBe("0.1.0");
+    expect(diagnostic("Desktop version")).toBe("0.1.0");
+    expect(diagnostic("RPC protocol")).toBe("v2");
+    expect(diagnostic("Private runtime")).toBe("CPython 3.14.10");
+    expect(diagnostic("Supported storage schema")).toBe("v9");
+    expect(diagnostic("Selected project schema")).toBe("No project selected");
+    expect(diagnostic("Desktop identifier")).toBe("org.corinthos.desktop");
+    expect(invoke.mock.calls.filter(([command]) => command === "backend_snapshot")).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "system.diagnostics")).toEqual([
+      ["workspace_request", { method: "system.diagnostics", params: {} }],
+    ]);
+  });
+
+  it("offers native identity and unavailable runtime diagnostics after startup failure", async () => {
+    invoke.mockResolvedValueOnce({ connection: "unavailable", desktop: {
+      version: "2.3.4", identifier: "org.fixture.desktop",
+    }, failure_origin: "startup", error: "The private runtime is missing." });
+    await render();
+    expect(host.querySelector(".connection")?.textContent).toBe("Backend unavailable");
+    expect(host.textContent).toContain("The private runtime is missing.");
+    await openDiagnostics();
+    expect(diagnostic("Desktop version")).toBe("2.3.4");
+    expect(diagnostic("Desktop identifier")).toBe("org.fixture.desktop");
+    expect(diagnostic("Application version")).toBe("Unavailable");
+    expect(diagnostic("Private runtime")).toBe("Unavailable");
+    expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
+    expect(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "Reconnect")).toBe(true);
+  });
+
+  it("keeps unsupported runtime details unavailable without diagnostic polling", async () => {
+    invoke.mockResolvedValueOnce(ready).mockResolvedValueOnce({ projects: [], next_offset: null });
+    await render();
+    await click("Settings");
+    await openDiagnostics();
+    expect(diagnostic("Private runtime")).toBe("Unavailable");
+    expect(diagnostic("Supported storage schema")).toBe("Unavailable");
+    expect(invoke.mock.calls).toHaveLength(2);
+  });
+
+  it.each([
+    { storage: "CURRENT" as const, schema_version: 9, label: "v9" },
+    { storage: "ABSENT" as const, schema_version: null, label: "No database" },
+  ])("distinguishes supported schema from selected project $label", async ({ storage, schema_version, label }) => {
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot") return diagnosticReady;
+      switch (payload.method) {
+        case "projects.list": return { projects: [{ ...legacy, storage, schema_version }], next_offset: null };
+        case "project.inspect": return { ...currentInspection(legacy.root), schema_version };
+        case "project.open_checked": return { ...summary, storage, schema_version };
+        case "system.diagnostics": return runtime;
+        default: throw new Error(`Unexpected operation ${payload.method}`);
+      }
+    });
+    await render();
+    await click("Open Project");
+    await click("Settings");
+    await openDiagnostics();
+    expect(diagnostic("Supported storage schema")).toBe("v9");
+    expect(diagnostic("Selected project schema")).toBe(label);
+  });
+
+  it("lets a disconnect invalidate the initial delayed ready response", async () => {
+    let finish: (value: BackendSnapshot) => void = () => {};
+    invoke.mockReturnValueOnce(new Promise<BackendSnapshot>((resolve) => { finish = resolve; }));
+    await render();
+    expect(host.querySelector(".connection")?.textContent).toBe("Connecting…");
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await act(async () => finish(ready));
+    expect(host.querySelector(".connection")?.textContent).toBe("Disconnected");
+    expect(host.querySelector(".primary-navigation")).toBeNull();
+    expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
+  });
+
+  it("guards duplicate restarts and rejects ready replies superseded by disconnect", async () => {
+    let finish: (value: BackendSnapshot) => void = () => {};
+    invoke.mockImplementation((command, payload) => {
+      if (command === "backend_snapshot") return Promise.resolve(ready);
+      if (command === "restart_backend") return new Promise<BackendSnapshot>((resolve) => { finish = resolve; });
+      if (payload.method === "projects.list") return Promise.resolve({ projects: [], next_offset: null });
+      throw new Error("Unexpected operation");
+    });
+    await render();
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    const reconnect = Array.from(host.querySelectorAll("button")).find((button) => button.textContent === "Reconnect")!;
+    await act(async () => { reconnect.click(); reconnect.click(); });
+    expect(host.querySelector(".connection")?.textContent).toBe("Restarting…");
+    expect(invoke.mock.calls.filter(([command]) => command === "restart_backend")).toHaveLength(1);
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await act(async () => finish(ready));
+    expect(host.querySelector(".connection")?.textContent).toBe("Disconnected");
+    expect(host.querySelector(".primary-navigation")).toBeNull();
+    invoke.mockResolvedValueOnce({ connection: "unavailable", desktop: ready.desktop,
+      failure_origin: "startup", error: "The private runtime could not start." });
+    await click("Reconnect");
+    expect(host.querySelector(".connection")?.textContent).toBe("Backend unavailable");
+    expect(host.textContent).toContain("The private runtime could not start.");
+    invoke.mockResolvedValueOnce(ready).mockResolvedValueOnce({ projects: [], next_offset: null });
+    await click("Reconnect");
+    expect(host.querySelector(".connection")?.textContent).toBe("Connected");
+  });
+
+  it("refreshes selected project and Work Item through passive reads after reconnect", async () => {
+    let changed = false;
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return ready;
+      switch (payload.method) {
+        case "projects.list": return { projects: [{ ...legacy, storage: "CURRENT", schema_version: 9 }], next_offset: null };
+        case "project.inspect": return currentInspection(legacy.root);
+        case "project.open_checked": return { ...summary, schema_version: 9 };
+        case "project.summary": return { ...summary, schema_version: 9 };
+        case "work.tree": return { nodes: [{ ...item, depth: 0 }], next_offset: null };
+        case "work.get": return { ...item, objective: changed ? "Refreshed Work Item" : item.objective };
+        default: throw new Error(`Unexpected operation ${payload.method}`);
+      }
+    });
+    await render();
+    await click("Open Project");
+    await click("Work");
+    await click(item.objective);
+    expect(host.querySelector(".work-selection")?.textContent).toContain(item.objective);
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    changed = true;
+    await click("Reconnect");
+    expect(host.querySelector('.primary-navigation [aria-current="page"]')?.textContent).toBe("Projects");
+    expect(host.querySelector('.project-views [aria-pressed="true"]')?.textContent).toBe("Work");
+    expect(host.querySelector(".work-selection")?.textContent).toContain("Refreshed Work Item");
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "project.open_checked")).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "project.summary")).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "project.create" || payload?.method === "import.commit")).toHaveLength(0);
+  });
+
+  it("restores the latest Work selection after entering through Command attention", async () => {
+    const other = { ...item, work_item_id: "other-work", objective: "Other Work Item" };
+    const card: CommandProjectCard = {
+      root: summary.root, display_name: summary.display_name, last_accessed_at: null,
+      availability: "AVAILABLE", initialized: true, storage: "CURRENT", schema_version: 9,
+      project_id: "project", error: null, active_project: null, active_workflow: null,
+      import_status: null, external_import: null, work_counts: null, focus_work_items: [],
+      sessions: null, latest_context: null, lifecycle: null,
+      validation: { state: "NOT_VERIFIED", latest_run: null, active_plan_refs: [], outcome: null },
+      attention: [{ kind: "BLOCKED", owner_type: "WORK_ITEM", owner_id: item.work_item_id,
+        reason_code: "BLOCKED", severity: "ACTION", summary: "Inspect Work", navigation: "WORK", action_ids: [] }],
+    };
+    const linkedReady = { ...ready, handshake: { ...ready.handshake, methods: [...methods, "command.overview"] } };
+    invoke.mockImplementation(async (command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return linkedReady;
+      switch (payload.method) {
+        case "projects.list": return { projects: [], next_offset: null };
+        case "command.overview": return { projects: [card], next_offset: null };
+        case "project.summary": return { ...summary, schema_version: 9 };
+        case "work.tree": return { nodes: [item, other].map((value) => ({ ...value, depth: 0 })), next_offset: null };
+        case "work.get": return payload.params.work_item_id === other.work_item_id ? other : item;
+        default: throw new Error(`Unexpected operation ${payload.method}`);
+      }
+    });
+    await render();
+    await click("Command");
+    await click("Open Attention");
+    expect(host.querySelector(".work-selection code")?.textContent).toBe(item.work_item_id);
+    await click(other.objective);
+    expect(host.querySelector(".work-selection code")?.textContent).toBe(other.work_item_id);
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await click("Reconnect");
+    expect(host.querySelector('.project-views [aria-pressed="true"]')?.textContent).toBe("Work");
+    expect(host.querySelector(".work-selection code")?.textContent).toBe(other.work_item_id);
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "work.get")
+      .map(([, payload]) => payload.params.work_item_id)).toEqual([item.work_item_id, other.work_item_id, other.work_item_id]);
+  });
+
+  it("rejects a reconnect summary superseded by an explicit open of the same project", async () => {
+    let finish: (value: ProjectSummary) => void = () => {};
+    let finishOpen: (value: ProjectSummary) => void = () => {};
+    let opened = 0;
+    invoke.mockImplementation((command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return Promise.resolve(ready);
+      switch (payload.method) {
+        case "projects.list": return Promise.resolve({ projects: [{ ...legacy, storage: "CURRENT", schema_version: 9 }], next_offset: null });
+        case "project.inspect": return Promise.resolve(currentInspection(legacy.root));
+        case "project.open_checked": return ++opened === 1 ? Promise.resolve({ ...summary, schema_version: 9 })
+          : new Promise<ProjectSummary>((resolve) => { finishOpen = resolve; });
+        case "project.summary": return new Promise<ProjectSummary>((resolve) => { finish = resolve; });
+        default: throw new Error(`Unexpected operation ${payload.method}`);
+      }
+    });
+    await render();
+    await click("Open Project");
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await click("Reconnect");
+    expect(host.textContent).toContain("Refreshing selected project");
+    await click("Open Project");
+    await act(async () => finish({ ...summary, schema_version: 9, display_name: "Stale project" }));
+    try {
+      expect(host.querySelector(".project-result")).toBeNull();
+      expect(host.textContent).not.toContain("Stale project");
+    } finally {
+      await act(async () => finishOpen({ ...summary, schema_version: 9, display_name: "Newly opened project" }));
+    }
+    expect(host.querySelector(".project-result")?.textContent).toContain("Newly opened project");
+    expect(host.textContent).not.toContain("Stale project");
+  });
+
+  it("retains the established Work selection when an older pick finishes after disconnect", async () => {
+    const other = { ...item, work_item_id: "other-work", objective: "Other Work Item" };
+    let finish: (value: WorkItem) => void = () => {};
+    let delayed = true;
+    invoke.mockImplementation((command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return Promise.resolve(ready);
+      switch (payload.method) {
+        case "projects.list": return Promise.resolve({ projects: [{ ...legacy, storage: "CURRENT", schema_version: 9 }], next_offset: null });
+        case "project.inspect": return Promise.resolve(currentInspection(legacy.root));
+        case "project.open_checked":
+        case "project.summary": return Promise.resolve({ ...summary, schema_version: 9 });
+        case "work.tree": return Promise.resolve({ nodes: [item, other].map((value) => ({ ...value, depth: 0 })), next_offset: null });
+        case "work.get": return payload.params.work_item_id === other.work_item_id
+          ? delayed ? new Promise<WorkItem>((resolve) => { finish = resolve; }) : Promise.resolve(other)
+          : Promise.resolve(item);
+        default: throw new Error(`Unexpected operation ${payload.method}`);
+      }
+    });
+    await render();
+    await click("Open Project");
+    await click("Work");
+    await click(item.objective);
+    await click(other.objective);
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await act(async () => finish(other));
+    delayed = false;
+    await click("Reconnect");
+    expect(host.querySelector(".work-selection")?.textContent).toContain(item.objective);
+    expect(host.querySelector(".work-selection")?.textContent).not.toContain(other.objective);
+    expect(invoke.mock.calls.filter(([, payload]) => payload?.method === "work.get").at(-1)?.[1].params.work_item_id)
+      .toBe(item.work_item_id);
+  });
+
+  it("ignores a diagnostic response from the disconnected backend", async () => {
+    let finish: (value: typeof runtime) => void = () => {};
+    let calls = 0;
+    invoke.mockImplementation((command, payload) => {
+      if (command === "backend_snapshot" || command === "restart_backend") return Promise.resolve(diagnosticReady);
+      if (payload.method === "projects.list") return Promise.resolve({ projects: [], next_offset: null });
+      if (payload.method === "system.diagnostics") return ++calls === 1
+        ? new Promise<typeof runtime>((resolve) => { finish = resolve; }) : Promise.resolve(runtime);
+      throw new Error("Unexpected operation");
+    });
+    await render();
+    await click("Settings");
+    await openDiagnostics();
+    expect(host.textContent).toContain("Reading runtime diagnostics");
+    await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
+    await act(async () => finish({ ...runtime, python_version: "99.99.99" }));
+    expect(diagnostic("Private runtime")).toBe("Unavailable");
+    expect(host.textContent).not.toContain("99.99.99");
+    await click("Reconnect");
+    expect(host.querySelector('.primary-navigation [aria-current="page"]')?.textContent).toBe("Settings");
+    expect(diagnostic("Private runtime")).toBe("CPython 3.14.10");
+    expect(calls).toBe(2);
   });
 });
 

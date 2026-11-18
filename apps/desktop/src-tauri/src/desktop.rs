@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewWindowBuilder};
@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewWindowBuil
 struct Backend {
     process: Option<(Sidecar, Handshake)>,
     attempted_start: bool,
+    startup_error: Option<&'static str>,
     closing: bool,
 }
 
@@ -25,58 +26,117 @@ struct DesktopState {
     generation: Arc<AtomicU64>,
 }
 
+#[derive(Clone, Serialize)]
+struct DesktopIdentity {
+    version: String,
+    identifier: String,
+}
+
+impl DesktopIdentity {
+    fn from_app(app: &AppHandle) -> Self {
+        Self {
+            version: app.package_info().version.to_string(),
+            identifier: app.config().identifier.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum FailureOrigin {
+    Startup,
+    Transport,
+    Busy,
+    Closing,
+    Bridge,
+}
+
 #[derive(Serialize)]
 struct Snapshot {
     connection: &'static str,
+    desktop: DesktopIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
     handshake: Option<Handshake>,
     #[serde(skip_serializing_if = "Option::is_none")]
     providers: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_origin: Option<FailureOrigin>,
 }
 
 impl Snapshot {
-    fn disconnected(error: &'static str) -> Self {
+    fn failure(desktop: DesktopIdentity, origin: FailureOrigin, error: &'static str) -> Self {
         Self {
-            connection: "disconnected",
+            connection: if matches!(origin, FailureOrigin::Startup) {
+                "unavailable"
+            } else {
+                "disconnected"
+            },
+            desktop,
             handshake: None,
             providers: None,
             error: Some(error),
+            failure_origin: Some(origin),
         }
     }
 }
 
 async fn snapshot(app: AppHandle, state: DesktopState, restart: bool) -> Snapshot {
+    let desktop = DesktopIdentity::from_app(&app);
+    let fallback_desktop = desktop.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let Ok(mut backend) = state.backend.try_lock() else {
-            return Snapshot::disconnected("The sidecar is busy. Retry the request.");
+            return Snapshot::failure(
+                desktop,
+                FailureOrigin::Busy,
+                "The sidecar is busy. Retry the request.",
+            );
         };
         if backend.closing {
-            return Snapshot::disconnected("The Corinthos desktop is closing.");
+            return Snapshot::failure(
+                desktop,
+                FailureOrigin::Closing,
+                "The Corinthos desktop is closing.",
+            );
         }
         if restart {
             state.generation.fetch_add(1, Ordering::AcqRel);
             if let Some((mut sidecar, _)) = backend.process.take()
                 && let Err(error) = sidecar.shutdown()
             {
-                return Snapshot::disconnected(error);
+                return Snapshot::failure(desktop, FailureOrigin::Transport, error);
             }
             backend.attempted_start = false;
+            backend.startup_error = None;
         }
         if !backend.attempted_start {
             backend.attempted_start = true;
             let epoch = state.generation.load(Ordering::Acquire);
             let generation = Arc::clone(&state.generation);
+            let established = AtomicBool::new(false);
             let events: EventSink = Arc::new(move |event| {
                 if epoch == generation.load(Ordering::Acquire) {
+                    if event.method == "system.ready" {
+                        established.store(true, Ordering::Release);
+                    } else if matches!(event.method, "backend.disconnected" | "system.stopping")
+                        && !established.load(Ordering::Acquire)
+                    {
+                        return;
+                    }
                     let _ = app.emit("backend-lifecycle", event);
                 }
             });
             match Sidecar::start(events) {
                 Ok(process) => backend.process = Some(process),
-                Err(error) => return Snapshot::disconnected(error),
+                Err(error) => {
+                    backend.startup_error = Some(error);
+                    return Snapshot::failure(desktop, FailureOrigin::Startup, error);
+                }
             }
+        }
+        if let Some(error) = backend.startup_error {
+            return Snapshot::failure(desktop, FailureOrigin::Startup, error);
         }
         if let Some((sidecar, handshake)) = backend.process.as_mut()
             && sidecar.is_running()
@@ -84,18 +144,28 @@ async fn snapshot(app: AppHandle, state: DesktopState, restart: bool) -> Snapsho
             return match sidecar.providers_status() {
                 Ok(providers) => Snapshot {
                     connection: "ready",
+                    desktop,
                     handshake: Some(handshake.clone()),
                     providers: Some(providers),
                     error: None,
+                    failure_origin: None,
                 },
-                Err(error) => Snapshot::disconnected(error),
+                Err(error) => Snapshot::failure(desktop, FailureOrigin::Transport, error),
             };
         }
-        Snapshot::disconnected("The Corinthos sidecar is disconnected.")
+        Snapshot::failure(
+            desktop,
+            FailureOrigin::Transport,
+            "The Corinthos sidecar is disconnected.",
+        )
     })
     .await
     .unwrap_or_else(|_| {
-        Snapshot::disconnected("The sidecar bridge could not complete the request.")
+        Snapshot::failure(
+            fallback_desktop,
+            FailureOrigin::Bridge,
+            "The sidecar bridge could not complete the request.",
+        )
     })
 }
 
@@ -218,4 +288,43 @@ pub fn local_asset(url: &Url) -> bool {
             (url.scheme(), url.host_str(), url.port()),
             ("http" | "https", Some("tauri.localhost"), None) | ("tauri", Some("localhost"), None)
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity() -> DesktopIdentity {
+        DesktopIdentity {
+            version: "0.1.0".into(),
+            identifier: "org.corinthos.desktop".into(),
+        }
+    }
+
+    #[test]
+    fn startup_failure_retains_native_identity_and_a_typed_origin() {
+        let value = serde_json::to_value(Snapshot::failure(
+            identity(),
+            FailureOrigin::Startup,
+            "Runtime missing",
+        ))
+        .unwrap();
+        assert_eq!(value["connection"], "unavailable");
+        assert_eq!(value["failure_origin"], "startup");
+        assert_eq!(value["desktop"]["identifier"], "org.corinthos.desktop");
+        assert_eq!(value["desktop"]["version"], "0.1.0");
+        assert!(value.get("handshake").is_none());
+    }
+
+    #[test]
+    fn established_transport_failure_is_disconnected() {
+        let value = serde_json::to_value(Snapshot::failure(
+            identity(),
+            FailureOrigin::Transport,
+            "Connection closed",
+        ))
+        .unwrap();
+        assert_eq!(value["connection"], "disconnected");
+        assert_eq!(value["failure_origin"], "transport");
+    }
 }

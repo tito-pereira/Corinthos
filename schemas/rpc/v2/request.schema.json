@@ -21,6 +21,12 @@
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
     },
     {
+      "if": { "properties": { "method": { "const": "system.diagnostics" } } },
+      "then": { "properties": { "params": {
+        "type": "object", "maxProperties": 0
+      } } }
+    },
+    {
       "if": { "properties": { "method": { "const": "project.inspect" } } },
       "then": {
         "required": ["params"],

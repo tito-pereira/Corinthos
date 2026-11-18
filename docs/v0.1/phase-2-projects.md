@@ -229,7 +229,9 @@ write through the same Python Application Layer as the CLI. The UI reloads
 from the backend after a mutation. Rust owns the connection and process lifecycle.
 
 The Windows CI job builds the normal executable and uses a test observer
-for real WebView integration. The fixture uses Phase 1 code to construct
-a v6 project. The observer verifies the registry, v7 summary, Work Item
-creation and status, closure of the sidecar, and passive provider sentinels.
+for real WebView integration. Current shared services create its project,
+registry, Work Item, Session and Context fixtures. The observer verifies their
+current projections, explicit operations, sidecar cleanup and passive provider
+sentinels. The current registry retains existing roots and recency on explicit
+opening. Diagnostics assertions use the explicit About / Diagnostics view.
 The per-user source installer and public desktop packaging are separate.

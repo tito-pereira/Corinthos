@@ -44,8 +44,14 @@ p { color: #3d554e; }
   padding: 0.35rem 0.65rem;
   border-radius: 0.25rem;
 }
-.connection.ready { background: #d8f3e6; color: #164635; }
-.connection.disconnected { background: #ffdfda; color: #701b13; }
+.connection.connected { background: #d8f3e6; color: #164635; }
+.connection.disconnected, .connection.unavailable { background: #ffdfda; color: #701b13; }
+.connection-control { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
+.connection-control button { background: #fff; color: #22584b; }
+.diagnostics { margin-top: 0.8rem; }
+.diagnostics summary { cursor: pointer; font-weight: 650; }
+.diagnostics summary:focus-visible { outline: 3px solid #1d7366; outline-offset: 2px; }
+.diagnostics p { margin-top: 0.6rem; }
 .section-heading, .provider-heading {
   display: flex;
   flex-wrap: wrap;

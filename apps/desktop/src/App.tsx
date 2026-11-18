@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
 import {
   bridge,
   ProjectCreationError,
@@ -11,8 +11,10 @@ import {
   type ProjectTab,
   type ProjectTarget,
   type ProviderStatus,
+  type RuntimeDiagnostics,
 } from "./bridge";
 import { Agents } from "./Agents";
+import { BackendDiagnostics, connectionLabels, type ConnectionState } from "./BackendDiagnostics";
 import { Command } from "./Command";
 import { ContextAudit } from "./ContextAudit";
 import { DirectorySelection } from "./DirectorySelection";
@@ -109,7 +111,8 @@ function RegistryEntry({ entry, busy, inspect, open }: {
   );
 }
 
-function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate, importDraft, onImportDraft }: {
+function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate, importDraft, onImportDraft,
+  screen, setScreen, view, setView, project, setProject, selectedWork, setSelectedWork, renderDiagnostics }: {
   methods: string[];
   providers: ProviderStatus[];
   onProviders: (value: ProviderStatus[]) => void;
@@ -118,17 +121,25 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   onCreate: () => Promise<ProjectSummary | null>;
   importDraft: ImportDraft;
   onImportDraft: (update: (value: ImportDraft) => ImportDraft) => void;
+  screen: Screen;
+  setScreen: Dispatch<SetStateAction<Screen>>;
+  view: ProjectTarget;
+  setView: Dispatch<SetStateAction<ProjectTarget>>;
+  project: ProjectSummary | null;
+  setProject: Dispatch<SetStateAction<ProjectSummary | null>>;
+  selectedWork: Record<string, string>;
+  setSelectedWork: Dispatch<SetStateAction<Record<string, string>>>;
+  renderDiagnostics: (projectCurrent: boolean) => ReactNode;
 }) {
-  const [screen, setScreen] = useState<Screen>("Home");
-  const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
   const [flow, setFlow] = useState<Onboarding>(creation.shown ? "create" : importDraft.uncertain ? "import" : null);
   const [openRoot, setOpenRoot] = useState("");
   const root = flow === "create" ? creation.root : openRoot;
   const [inspection, setInspection] = useState<ProjectInspection | null>(null);
   const [importMutating, setImportMutating] = useState(false);
   const [confirmedImport, setConfirmedImport] = useState<string | null>(null);
-  const [project, setProject] = useState<ProjectSummary | null>(null);
-  const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
+  const [refreshingSelection, setRefreshingSelection] = useState(Boolean(project));
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [registry, setRegistry] = useState<ProjectEntry[]>([]);
   const [offset, setOffset] = useState(0);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -143,6 +154,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   const [showPlanning, setShowPlanning] = useState(false);
   const [commandVersion, setCommandVersion] = useState(0);
   const openRequest = useRef(0);
+  const selectionRequest = useRef(0);
   const navigation = useRef(0);
   const mounted = useRef(true);
   const canList = methods.includes("projects.list");
@@ -189,8 +201,36 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     return () => { mounted.current = false; navigation.current += 1; };
   }, []);
 
+  async function refreshSelection() {
+    const path = projectRef.current?.root;
+    if (!path) return;
+    const current = ++selectionRequest.current;
+    const active = () => mounted.current && selectionRequest.current === current && projectRef.current?.root === path;
+    setRefreshingSelection(true);
+    setOpenError("");
+    if (!canInspect) {
+      setOpenError("Project details are unavailable in this backend.");
+      return;
+    }
+    try {
+      const result = await bridge.project(path, false);
+      if (active()) {
+        setProject(result);
+        setRefreshingSelection(false);
+      }
+    } catch {
+      if (active()) {
+        setOpenError("Could not refresh the selected project. Retry when it is available.");
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (projectRef.current) void refreshSelection();
+  }, [canInspect]);
+
   function changeScreen(value: Screen) {
-    if (importMutating) return;
+    if (!mounted.current || importMutating) return;
     navigation.current += 1;
     openRequest.current += 1;
     openingBusy.current = false;
@@ -200,7 +240,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }
 
   function chooseFlow(value: Onboarding, path?: string) {
-    if (importMutating || pickerBusy.current || creation.pending) return;
+    if (!mounted.current || importMutating || pickerBusy.current || creation.pending) return;
     navigation.current += 1;
     openRequest.current += 1;
     openingBusy.current = false;
@@ -216,7 +256,8 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }
 
   async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
-    if (pickerBusy.current || openingBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    if (!mounted.current || pickerBusy.current || openingBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
+    selectionRequest.current += 1;
     openingBusy.current = true;
     const request = ++openRequest.current;
     navigation.current += 1;
@@ -226,6 +267,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     setOpenError("");
     setInspection(null);
     setProject(null);
+    setRefreshingSelection(false);
     setView(target);
     setScreen("Projects");
     try {
@@ -261,7 +303,8 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }
 
   async function migrateProject() {
-    if (!inspection?.inspection_digest || inspection.status !== "MIGRATION_REQUIRED" || openingBusy.current || pickerBusy.current) return;
+    if (!mounted.current || !inspection?.inspection_digest || inspection.status !== "MIGRATION_REQUIRED" || openingBusy.current || pickerBusy.current) return;
+    selectionRequest.current += 1;
     openingBusy.current = true;
     const selected = inspection;
     const request = ++openRequest.current;
@@ -277,6 +320,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
       await loadProjects(0);
       if (!active()) return;
       setProject(result);
+      setRefreshingSelection(false);
       setFlow(null);
       setScreen("Projects");
     } catch {
@@ -287,6 +331,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   }
 
   function navigate(path: string, target: ProjectTarget) {
+    if (!mounted.current) return;
     if (target.tab === "work" && target.id) {
       const workId = target.id;
       setSelectedWork((previous) => ({ ...previous, [path]: workId }));
@@ -302,7 +347,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pickerBusy.current) return;
+    if (!mounted.current || pickerBusy.current) return;
     if (flow === "open") {
       if (opening || !canOpen) return;
       void openProject(root, true);
@@ -320,6 +365,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     };
     setCreationFields(fields);
     if (fields.name || fields.root) return;
+    selectionRequest.current += 1;
     const current = navigation.current;
     void onCreate().then(async (result) => {
       if (!result || !mounted.current) return;
@@ -327,6 +373,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
       setFlow(null);
       if (current === navigation.current) {
         setProject(result);
+        setRefreshingSelection(false);
         setView({ tab: "overview" });
         setShowPlanning(false);
         setScreen("Projects");
@@ -344,7 +391,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
     { tab: "validation", label: "Validation", enabled: canViewValidation },
   ];
   const activeTab = tabs.some((tab) => tab.enabled && view.tab === tab.tab) ? view.tab : "overview";
-  const activeWorkId = project ? view.id ?? selectedWork[project.root] : undefined;
+  const activeWorkId = project ? selectedWork[project.root] ?? view.id : undefined;
 
   return (
     <>
@@ -353,8 +400,10 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
           disabled={importMutating} onClick={() => changeScreen(name)}>{name}</button>)}
       </nav>
       {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
-      {screen === "Settings" && <ProviderSettings methods={methods} root={project?.root}
-        providers={providers} onProviders={onProviders} />}
+      {screen === "Settings" && <>
+        {renderDiagnostics(!refreshingSelection)}
+        <ProviderSettings methods={methods} root={project?.root} providers={providers} onProviders={onProviders} />
+      </>}
       {handlesProjects && <section aria-labelledby="projects-title">
         <div className="section-heading">
           <h2 id="projects-title">{screen === "Home" ? "Recent projects" : "Projects"}</h2>
@@ -433,7 +482,10 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
             onClick={() => void openProject(creation.summary!.root, false)}>Inspect created project</button>
         </p>}
         {opening && <p role="status">Opening project…</p>}
+        {refreshingSelection && !openError && <p role="status">Refreshing selected project…</p>}
         {openError && <p role="alert">{openError}</p>}
+        {refreshingSelection && openError && <button type="button" disabled={!canInspect}
+          onClick={() => void refreshSelection()}>Retry project refresh</button>}
         {flow === "import" && <>
           {importDraft.uncertain && !importMutating && <p role="alert">Import was not confirmed. Inspect the same repository to check its durable state before retrying.</p>}
           <RepositoryImport path={importDraft.path} onPathChange={(path) => {
@@ -480,7 +532,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
         <div className="section-heading"><h2 id="provider-title">Providers</h2><span>Cached status</span></div>
         <Providers providers={providers} />
       </section>}
-      {screen === "Projects" && project && (
+      {screen === "Projects" && project && !refreshingSelection && (
         <section aria-labelledby="project-title">
           <div className="section-heading"><h2 id="project-title">Project Summary</h2></div>
           <ProjectFacts project={project} />
@@ -518,12 +570,17 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
               methods={methods}
               providers={providers}
               initialId={activeWorkId}
-              onSelect={(id) => setSelectedWork((previous) => ({ ...previous, [project.root]: id }))}
+              onSelect={(id) => {
+                if (mounted.current) setSelectedWork((previous) => ({ ...previous, [project.root]: id }));
+              }}
               openTarget={(target) => navigate(project.root, target)}
               onChange={async () => {
-                if (canInspect) {
+                if (mounted.current && canInspect) {
+                  const current = ++selectionRequest.current;
                   const result = await bridge.project(project.root, false);
-                  setProject((current) => current?.root === result.root ? result : current);
+                  if (mounted.current && selectionRequest.current === current) {
+                    setProject((previous) => previous?.root === result.root ? result : previous);
+                  }
                 }
               }}
             />
@@ -537,20 +594,44 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
 export function App() {
   const [importDraft, setImportDraft] = useState<ImportDraft>({ path: "", uncertain: false });
   const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
+  const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [failure, setFailure] = useState("");
+  const [screen, setScreen] = useState<Screen>("Home");
+  const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [runtime, setRuntime] = useState<RuntimeDiagnostics | null>(null);
+  const [diagnosticsPending, setDiagnosticsPending] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState("");
   const request = useRef(0);
+  const restartInFlight = useRef(false);
+  const diagnosticsRequest = useRef(0);
+  const diagnosticsInFlight = useRef(false);
   const creationRequest = useRef(0);
   const creationInFlight = useRef(false);
   const [creation, setCreation] = useState<CreationState>({
     name: "", root: "", shown: false, pending: false, outcome: "draft", error: "", summary: null,
   });
 
+  function applySnapshot(result: BackendSnapshot) {
+    setSnapshot(result);
+    setConnection(result.connection === "ready" ? "connected" : result.connection);
+    setFailure(result.connection === "ready" ? "" : result.error ?? "The sidecar is disconnected.");
+  }
+
   function disconnected(error = "The sidecar connection closed.") {
     request.current += 1;
     creationRequest.current += 1;
+    diagnosticsRequest.current += 1;
     creationInFlight.current = false;
+    diagnosticsInFlight.current = false;
+    restartInFlight.current = false;
+    setDiagnosticsPending(false);
     setCreation((previous) => previous.pending ? { ...previous, pending: false, shown: true, outcome: "uncertain",
       error: "Creation may have completed before disconnect. Reconnect, inspect the selected directory, or explicitly retry with the same name and path." } : previous);
-    setSnapshot({ connection: "disconnected", error });
+    setConnection("disconnected");
+    setFailure(error);
   }
 
   async function createProject() {
@@ -596,9 +677,12 @@ export function App() {
         }
         unlisten = release;
         const result = await bridge.snapshot();
-        if (mounted && request.current === current) setSnapshot(result);
+        if (mounted && request.current === current) applySnapshot(result);
       } catch {
-        if (mounted && request.current === current) disconnected("The desktop bridge could not connect.");
+        if (mounted && request.current === current) {
+          setConnection("unavailable");
+          setFailure("The desktop bridge could not connect.");
+        }
       }
     }
     void connect();
@@ -606,23 +690,69 @@ export function App() {
       mounted = false;
       request.current += 1;
       creationRequest.current += 1;
+      diagnosticsRequest.current += 1;
       unlisten?.();
     };
   }, []);
 
   async function reconnect() {
+    if (restartInFlight.current) return;
+    restartInFlight.current = true;
     const current = ++request.current;
-    setSnapshot(null);
+    diagnosticsRequest.current += 1;
+    diagnosticsInFlight.current = false;
+    setDiagnosticsPending(false);
+    setConnection("restarting");
+    setRuntime(null);
+    setFailure("");
     try {
       const result = await bridge.restart();
-      if (request.current === current) setSnapshot(result);
+      if (request.current === current) applySnapshot(result);
     } catch {
       if (request.current === current) disconnected("The sidecar could not restart.");
+    } finally {
+      if (request.current === current) restartInFlight.current = false;
     }
   }
 
-  const ready = snapshot?.connection === "ready";
-  const connection = snapshot?.connection ?? "connecting";
+  async function loadDiagnostics() {
+    if (connection !== "connected" || snapshot?.connection !== "ready" ||
+        !snapshot.handshake.methods.includes("system.diagnostics") || diagnosticsInFlight.current) return;
+    diagnosticsInFlight.current = true;
+    const current = ++diagnosticsRequest.current;
+    const generation = request.current;
+    setDiagnosticsPending(true);
+    setDiagnosticsError("");
+    try {
+      const result = await bridge.diagnostics();
+      if (diagnosticsRequest.current === current && request.current === generation) setRuntime(result);
+    } catch {
+      if (diagnosticsRequest.current === current && request.current === generation) {
+        setDiagnosticsError("Runtime diagnostics could not be read. Close and reopen this view to retry.");
+      }
+    } finally {
+      if (diagnosticsRequest.current === current && request.current === generation) {
+        diagnosticsInFlight.current = false;
+        setDiagnosticsPending(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (showDiagnostics && connection === "connected") void loadDiagnostics();
+  }, [connection]);
+
+  function diagnostics(projectCurrent: boolean) {
+    return <BackendDiagnostics snapshot={snapshot} connection={connection} runtime={runtime}
+      project={project} projectCurrent={projectCurrent} open={showDiagnostics} pending={diagnosticsPending}
+      error={diagnosticsError} onToggle={(open) => {
+        setShowDiagnostics(open);
+        if (open && !showDiagnostics) void loadDiagnostics();
+      }} />;
+  }
+
+  const ready = connection === "connected" && snapshot?.connection === "ready";
+  const generation = request.current;
 
   return (
     <main>
@@ -631,27 +761,21 @@ export function App() {
           <h1>Corinthos</h1>
           <p>Local project operations</p>
         </div>
-        <span className={`connection ${connection}`} role="status">
-          {ready ? "Connected" : snapshot ? "Disconnected" : "Connecting…"}
-        </span>
+        <div className="connection-control">
+          <span className={`connection ${connection}`} role="status">{connectionLabels[connection]}</span>
+          {(connection === "disconnected" || connection === "unavailable") &&
+            <button type="button" onClick={() => void reconnect()}>Reconnect</button>}
+        </div>
       </header>
 
-      <section aria-labelledby="backend-title">
-        <div className="section-heading"><h2 id="backend-title">Backend</h2></div>
-        {snapshot === null && <p>Waiting for the sidecar handshake.</p>}
-        {snapshot?.connection === "disconnected" && (
-          <div className="failure">
-            <p role="alert">{snapshot.error ?? "The sidecar is disconnected."}</p>
-            <button type="button" onClick={() => void reconnect()}>Reconnect</button>
-          </div>
-        )}
-        {ready && (
-          <dl className="facts">
-            <div><dt>Application version</dt><dd>{snapshot.handshake.version}</dd></div>
-            <div><dt>RPC protocol</dt><dd>v{snapshot.handshake.protocol_version}</dd></div>
-          </dl>
-        )}
-      </section>
+      {!ready && <section aria-labelledby="support-title">
+        <div className="section-heading"><h2 id="support-title">Backend support</h2></div>
+        {failure && <p role="alert">{failure}</p>}
+        <p>{connection === "connecting" ? "Waiting for the sidecar handshake."
+          : connection === "restarting" ? "Restarting the sidecar."
+          : "Check the private runtime and reconnect when it is available."}</p>
+        {diagnostics(true)}
+      </section>}
 
       {creation.pending && <p role="status">Creating project. The outcome is not yet confirmed. Leaving this form does not cancel backend initialization.</p>}
       {creation.error && <div role="alert"><p>{creation.error}</p>
@@ -659,8 +783,12 @@ export function App() {
       </div>}
       {ready && <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
         creation={creation} onCreation={setCreation} onCreate={createProject} importDraft={importDraft} onImportDraft={setImportDraft}
-        onProviders={(providers) => setSnapshot((current) => current?.connection === "ready"
-          ? { ...current, providers: { providers } } : current)} />}
+        screen={screen} setScreen={setScreen} view={view} setView={setView} project={project} setProject={setProject}
+        selectedWork={selectedWork} setSelectedWork={setSelectedWork} renderDiagnostics={diagnostics}
+        onProviders={(providers) => {
+          if (request.current === generation) setSnapshot((current) => current?.connection === "ready"
+            ? { ...current, providers: { providers } } : current);
+        }} />}
     </main>
   );
 }

@@ -385,17 +385,36 @@ function request<T>(method: string, params: object) {
   return reply;
 }
 
-export type BackendSnapshot =
+export interface DesktopIdentity {
+  version: string;
+  identifier: string;
+}
+
+export interface RuntimeDiagnostics {
+  python_implementation: string;
+  python_version: string;
+  supported_schema_version: number;
+}
+
+export type BackendSnapshot = {
+  desktop: DesktopIdentity;
+} & (
   | {
       connection: "ready";
       handshake: { protocol_version: number; version: string; methods: string[] };
       providers: { providers: ProviderStatus[] };
     }
-  | { connection: "disconnected"; error?: string };
+  | {
+      connection: "disconnected" | "unavailable";
+      error?: string;
+      failure_origin?: "startup" | "transport" | "busy" | "closing" | "bridge";
+    }
+);
 
 export const bridge = {
   selectProjectDirectory: () => invoke<string | null>("select_project_directory"),
   snapshot: () => invoke<BackendSnapshot>("backend_snapshot"),
+  diagnostics: () => request<RuntimeDiagnostics>("system.diagnostics", {}),
   projects: (offset: number) =>
     request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
   project: (root: string, open: boolean) =>

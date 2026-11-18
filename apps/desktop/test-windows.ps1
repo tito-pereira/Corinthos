@@ -87,61 +87,68 @@ try {
     $profileHash = (Get-FileHash -LiteralPath $profile).Hash
     $recent = Join-Path $paths.State 'recent-projects.json'
     $missing = Join-Path $root 'missing-project'
-    $legacyRegistry = @{
-        version = 1
-        projects = @(
-            @{ path = $project; last_opened_at = '2026-01-02T00:00:00Z' }
-            @{ path = $missing; last_opened_at = '2026-01-01T00:00:00Z' }
-        )
-    } | ConvertTo-Json -Depth 4
-    [IO.File]::WriteAllText($recent, $legacyRegistry)
-    $recentHash = (Get-FileHash -LiteralPath $recent).Hash
-
-    $baseline = '13e7bf556788e737493d767b30e12a6613c8fa73'
-    $archive = Join-Path $work 'phase-three.zip'
-    $legacy = Join-Path $work 'phase-three'
-    git -C $repo archive --format=zip "--output=$archive" $baseline -- src/corinthos
-    if ($LASTEXITCODE -ne 0) { throw 'The exact Phase 3 source is required for the desktop v8 fixture.' }
-    [IO.Compression.ZipFile]::ExtractToDirectory($archive, $legacy)
-    $legacySource = Join-Path $legacy 'src'
-    $makeV8Path = Join-Path $work 'make_v8.py'
-    $makeV8 = @'
-import sqlite3, sys
+    $fixtureState = Join-Path $work 'fixture-state.json'
+    $makeCurrentPath = Join-Path $work 'make_current.py'
+    $makeCurrent = @'
+import json, sqlite3, sys
 from contextlib import closing
-sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from corinthos.bootstrap import initialize_private
 from corinthos.contracts import ContractStore
-from corinthos.contracts import store
+from corinthos.context import ContextService
+from corinthos.project_registry import ProjectRegistryService
 from corinthos.sessions.repository import SessionRepository
 from corinthos.work import WorkService
-assert store._SCHEMA_VERSION == 8 and store.__file__.startswith(sys.argv[1])
-work = WorkService(sys.argv[2])
+project, missing, snapshot_path = map(Path, sys.argv[1:])
+work = WorkService(project)
 item = work.create(
     scope_level="TASK",
     objective="Preserve this Work Item",
     acceptance_criteria=[
         "Keep the existing Work Item state unchanged.",
-        "api_key=v8-fixture-hidden-value",
+        "api_key=current-fixture-hidden-value",
     ],
 )
 work.transition(item.work_item_id, "ACTIVE")
-sessions = SessionRepository(sys.argv[2])
-legacy = sessions.create(
+projection = ContextService(project).create(item.work_item_id, "codex")
+sessions = SessionRepository(project)
+existing = sessions.create(
     item.work_item_id, provider="codex", owner_id="fixture-owner",
-    timeout_seconds=120, envelope_sha256="a" * 64,
+    timeout_seconds=120, envelope_sha256=projection.projection_digest,
+    context_projection_id=projection.projection_id,
 )
-fence = (legacy.session_id, legacy.owner_id, legacy.run_generation)
+fence = (existing.session_id, existing.owner_id, existing.run_generation)
 sessions.running(*fence, provider_version="9.8.6", model="fixture-model")
 sessions.observe(*fence, "OUTPUT", {"text": "Historical fixture observation"})
 sessions.observe(*fence, "USAGE", {}, usage={"input_tokens": 12, "output_tokens": 1})
 sessions.finish(*fence, "SUCCEEDED")
-database = ContractStore(sys.argv[2]).database_path
+database = ContractStore(project).database_path
 with closing(sqlite3.connect(database)) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone() == (8,)
-    assert connection.execute("SELECT name FROM sqlite_schema WHERE name = 'context_projections'").fetchall() == []
+    assert connection.execute("PRAGMA user_version").fetchone() == (ContractStore.current_schema_version(),)
+    assert connection.execute("SELECT count(*) FROM context_projections").fetchone() == (1,)
     assert connection.execute("SELECT count(*) FROM agent_sessions").fetchone() == (1,)
+    snapshot = {
+        "work": connection.execute("SELECT * FROM work_items").fetchall(),
+        "session": connection.execute(
+            "SELECT session_id, state, provider_version, model, input_tokens, output_tokens "
+            "FROM agent_sessions WHERE session_id = ?", (existing.session_id,),
+        ).fetchone(),
+        "events": connection.execute(
+            "SELECT * FROM agent_session_events WHERE session_id = ? ORDER BY sequence",
+            (existing.session_id,),
+        ).fetchall(),
+    }
+snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+missing.mkdir()
+initialize_private(missing)
+registry = ProjectRegistryService()
+registry.remember(missing)
+registry.remember(project)
+missing.rename(missing.with_name("moved-missing-project"))
 '@
-    [IO.File]::WriteAllText($makeV8Path, $makeV8)
-    Invoke-PrivatePython $paths.Install @($makeV8Path, $legacySource, $project)
+    [IO.File]::WriteAllText($makeCurrentPath, $makeCurrent)
+    Invoke-PrivatePython $paths.Install @($makeCurrentPath, $project, $missing, $fixtureState)
+    $recentHash = (Get-FileHash -LiteralPath $recent).Hash
     $database = Join-Path $project '.corinthos\state.db'
     $databaseHash = (Get-FileHash -LiteralPath $database).Hash
 
@@ -174,7 +181,7 @@ internal static class Provider {
         } else {
             if (args.Length == 0 || args[0] != "exec" || Array.IndexOf(args, "--json") < 0) return 2;
             string input = Console.In.ReadToEnd();
-            if (input.Contains("v8-fixture-hidden-value") ||
+            if (input.Contains("current-fixture-hidden-value") ||
                 !input.Contains("projection_id") ||
                 !input.Contains("projection_digest")) return 3;
             if (input.Contains("Adaptive fixture: add one local check")) {
@@ -244,7 +251,7 @@ internal static class ClaudeFixture {
             Array.IndexOf(args, "--resume") >= 0 ||
             Array.IndexOf(args, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") >= 0) return 2;
         string input = Console.In.ReadToEnd();
-        if (input.Contains("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") || input.Contains("v8-fixture-hidden-value")) return 3;
+        if (input.Contains("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") || input.Contains("current-fixture-hidden-value")) return 3;
         var json = new JavaScriptSerializer();
         var outer = json.Deserialize<Dictionary<string, object>>(input.Substring(input.IndexOf('\n') + 1));
         var context = (Dictionary<string, object>)outer["context"];
@@ -317,8 +324,8 @@ internal static class ClaudeFixture {
     cargo test --manifest-path $manifest --locked --no-default-features private_runtime_repeated_cycles -- --ignored --nocapture
     if ($LASTEXITCODE -ne 0) { throw 'Private runtime lifecycle integration failed.' }
     Assert-Spike (![IO.File]::Exists($registry) -and ![IO.File]::Exists($autoLog)) 'Passive bridge started a PATH provider or wrote its registry.'
-    Assert-Spike ((Get-FileHash -LiteralPath $database).Hash -eq $databaseHash) 'Passive bridge migrated the v8 project.'
-    Assert-Spike ((Get-FileHash -LiteralPath $recent).Hash -eq $recentHash) 'Passive bridge changed the v1 registry.'
+    Assert-Spike ((Get-FileHash -LiteralPath $database).Hash -eq $databaseHash) 'Passive bridge changed the current project.'
+    Assert-Spike ((Get-FileHash -LiteralPath $recent).Hash -eq $recentHash) 'Passive bridge changed the current registry.'
 
     $fixture = @{
         version = 1
@@ -333,7 +340,7 @@ internal static class ClaudeFixture {
     Invoke-DesktopFixture 'passive'
     Assert-Spike (![IO.File]::Exists($autoLog) -and ![IO.File]::Exists($configuredLog) -and ![IO.File]::Exists($claudeLog)) 'Passive Context, Agents or switch status launched a provider.'
     Assert-Spike ((Get-FileHash -LiteralPath $registry).Hash -eq $registryHash) 'Context or passive Agents rendering rewrote provider state.'
-    Write-Host 'Desktop WebView explicitly migrated and opened the v9 project, verified an immutable projection and its redacted source provenance, and inspected legacy Agents without native probes.'
+    Write-Host 'Desktop WebView opened the current project, verified an immutable projection and its redacted provenance, and inspected current session history without native probes.'
 
     Invoke-DesktopFixture 'sessions'
     Assert-Spike (![IO.File]::Exists($autoLog) -and [IO.File]::Exists($configuredLog)) 'Explicit sessions did not select only the configured provider.'
@@ -345,14 +352,13 @@ internal static class ClaudeFixture {
 
 
     $savedRegistry = Get-Content -Raw -LiteralPath $recent | ConvertFrom-Json
-    Assert-Spike ($savedRegistry.version -eq 2 -and $savedRegistry.projects.Count -eq 2 -and $savedRegistry.projects[0].root -eq $project) 'Explicit project open lost legacy registry entries.'
-    $backups = @(Get-ChildItem -File -LiteralPath (Split-Path $database) -Filter 'state.pre-v9-*.db')
-    Assert-Spike ($backups.Count -eq 1) 'Explicit project open did not preserve exactly one v8 backup.'
-    $checkMigrationPath = Join-Path $work 'check_migration.py'
-    $checkMigration = @'
+    Assert-Spike ($savedRegistry.version -eq 3 -and $savedRegistry.projects.Count -eq 2 -and $savedRegistry.projects[0].root -eq $project -and $savedRegistry.projects[1].root -eq $missing) 'Explicit project open changed current registry entries or order.'
+    $checkCurrentPath = Join-Path $work 'check_current.py'
+    $checkCurrent = @'
 import json, sqlite3, sys
 from contextlib import closing
 from pathlib import Path
+from corinthos.contracts import ContractStore
 
 def inspect(database):
     with closing(sqlite3.connect(Path(database).as_uri() + "?mode=ro", uri=True)) as db:
@@ -363,79 +369,81 @@ def inspect(database):
         assert db.execute("SELECT objective, status FROM work_items").fetchall() == [
             ("Preserve this Work Item", "ACTIVE")
         ]
-        legacy_session = db.execute(
+        fixture_session = db.execute(
             "SELECT session_id, state, provider_version, model, input_tokens, output_tokens "
             "FROM agent_sessions WHERE provider_version = '9.8.6'"
         ).fetchone()
-        assert legacy_session[1:] == ("SUCCEEDED", "9.8.6", "fixture-model", 12, 1)
-        legacy_events = db.execute(
+        assert fixture_session[1:] == ("SUCCEEDED", "9.8.6", "fixture-model", 12, 1)
+        fixture_events = db.execute(
             "SELECT * FROM agent_session_events WHERE session_id = ? ORDER BY sequence",
-            (legacy_session[0],),
+            (fixture_session[0],),
         ).fetchall()
-        if version == 9:
-            assert db.execute("SELECT context_projection_id FROM agent_sessions WHERE session_id = ?",
-                              (legacy_session[0],)).fetchone() == (None,)
-            states = db.execute(
-                "SELECT a.session_id, a.state, p.projection_digest, a.provider, "
-                "a.work_item_id, a.native_session_id, p.projection_id, p.canonical_payload "
-                "FROM agent_sessions a "
-                "JOIN context_projections p ON p.projection_id = a.context_projection_id "
-                "ORDER BY a.created_at, a.session_id"
+        assert version == ContractStore.current_schema_version()
+        assert db.execute("SELECT context_projection_id FROM agent_sessions WHERE session_id = ?",
+                          (fixture_session[0],)).fetchone()[0] is not None
+        states = db.execute(
+            "SELECT a.session_id, a.state, p.projection_digest, a.provider, "
+            "a.work_item_id, a.native_session_id, p.projection_id, p.canonical_payload "
+            "FROM agent_sessions a "
+            "JOIN context_projections p ON p.projection_id = a.context_projection_id "
+            "WHERE a.provider_version != '9.8.6' "
+            "ORDER BY a.created_at, a.session_id"
+        ).fetchall()
+        assert [(row[1], row[3]) for row in states] == [
+            ("CANCELLED", "codex"), ("TIMED_OUT", "codex"), ("CANCELLED", "codex"),
+            ("SUCCEEDED", "claude"), ("INTERRUPTED", "codex"),
+        ], states
+        source, target = states[2:4]
+        assert source[0] != target[0]
+        [(work_item_id,)] = db.execute("SELECT work_item_id FROM work_items").fetchall()
+        assert all(row[4] == work_item_id for row in states)
+        assert source[5] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        assert target[5] == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        for row in states:
+            session_id, state, digest = row[:3]
+            assert len(digest) == 64
+            events = db.execute(
+                "SELECT kind, payload FROM agent_session_events WHERE session_id = ?",
+                (session_id,),
             ).fetchall()
-            assert [(row[1], row[3]) for row in states] == [
-                ("CANCELLED", "codex"), ("TIMED_OUT", "codex"), ("CANCELLED", "codex"),
-                ("SUCCEEDED", "claude"), ("INTERRUPTED", "codex"),
-            ], states
-            source, target = states[2:4]
-            assert source[0] != target[0]
-            [(work_item_id,)] = db.execute("SELECT work_item_id FROM work_items").fetchall()
-            assert all(row[4] == work_item_id for row in states)
-            assert source[5] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-            assert target[5] == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-            for row in states:
-                session_id, state, digest = row[:3]
-                assert len(digest) == 64
-                events = db.execute(
-                    "SELECT kind, payload FROM agent_session_events WHERE session_id = ?",
-                    (session_id,),
-                ).fetchall()
-                assert any(kind == "OUTPUT" for kind, _ in events)
-                terminal_kind = "SESSION_FINISHED" if state == "SUCCEEDED" else state
-                assert any(kind == terminal_kind for kind, _ in events), (state, events)
-                if session_id == target[0]:
-                    assert any("Verified switch continuity from the source Handoff" in payload
-                               for kind, payload in events if kind == "OUTPUT")
-            handoffs = db.execute(
-                "SELECT handoff_id, source_session_id, event_cutoff FROM session_handoffs"
-            ).fetchall()
-            assert {row[1] for row in handoffs} == {states[0][0], source[0]} and len(handoffs) == 2
-            for _, session_id, event_cutoff in handoffs:
-                cutoff = db.execute(
-                    "SELECT MAX(sequence) FROM agent_session_events WHERE session_id = ?", (session_id,)
-                ).fetchone()[0]
-                assert event_cutoff == cutoff
-            [source_handoff] = [row[0] for row in handoffs if row[1] == source[0]]
-            target_projection = json.loads(target[7])
-            assert target_projection["required_handoff_id"] == source_handoff
-            assert target_projection["target_provider"] == "claude"
-            assert "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" not in target[7]
-            assert db.execute(
-                "SELECT kind, authority FROM context_projection_sources "
-                "WHERE projection_id = ? AND identity = ?",
-                (target[6], source_handoff),
-            ).fetchall() == [("SESSION_HANDOFF", "DERIVED")]
+            assert any(kind == "OUTPUT" for kind, _ in events)
+            terminal_kind = "SESSION_FINISHED" if state == "SUCCEEDED" else state
+            assert any(kind == terminal_kind for kind, _ in events), (state, events)
+            if session_id == target[0]:
+                assert any("Verified switch continuity from the source Handoff" in payload
+                           for kind, payload in events if kind == "OUTPUT")
+        handoffs = db.execute(
+            "SELECT handoff_id, source_session_id, event_cutoff FROM session_handoffs"
+        ).fetchall()
+        assert {row[1] for row in handoffs} == {states[0][0], source[0]} and len(handoffs) == 2
+        for _, session_id, event_cutoff in handoffs:
+            cutoff = db.execute(
+                "SELECT MAX(sequence) FROM agent_session_events WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+            assert event_cutoff == cutoff
+        [source_handoff] = [row[0] for row in handoffs if row[1] == source[0]]
+        target_projection = json.loads(target[7])
+        assert target_projection["required_handoff_id"] == source_handoff
+        assert target_projection["target_provider"] == "claude"
+        assert "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" not in target[7]
+        assert db.execute(
+            "SELECT kind, authority FROM context_projection_sources "
+            "WHERE projection_id = ? AND identity = ?",
+            (target[6], source_handoff),
+        ).fetchall() == [("SESSION_HANDOFF", "DERIVED")]
 
-            for table in ("context_projections", "context_projection_sources", "session_handoffs"):
-                captures = db.execute(f"SELECT * FROM {table}").fetchall()
-                assert captures and "v8-fixture-hidden-value" not in repr(captures)
-        return version, work, legacy_session, legacy_events
+        for table in ("context_projections", "context_projection_sources", "session_handoffs"):
+            captures = db.execute(f"SELECT * FROM {table}").fetchall()
+            assert captures and "current-fixture-hidden-value" not in repr(captures)
+        return {"work": [list(row) for row in work], "session": list(fixture_session),
+                "events": [list(row) for row in fixture_events]}
 
-current, backup = map(inspect, sys.argv[1:])
-assert current[0] == 9 and backup[0] == 8
-assert current[1:] == backup[1:]
+current = inspect(sys.argv[1])
+expected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert current == expected
 '@
-    [IO.File]::WriteAllText($checkMigrationPath, $checkMigration)
-    Invoke-PrivatePython $paths.Install @($checkMigrationPath, $database, $backups[0].FullName)
+    [IO.File]::WriteAllText($checkCurrentPath, $checkCurrent)
+    Invoke-PrivatePython $paths.Install @($checkCurrentPath, $database, $fixtureState)
 
     $project = Join-Path $root 'adaptive-project'
     $null = Invoke-PrivatePython $paths.Install @('-m', 'corinthos', 'init', $project)

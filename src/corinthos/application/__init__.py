@@ -2,6 +2,7 @@
 """Shared, passive read operations for the CLI and desktop sidecar."""
 
 import os
+import platform
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Literal
 
 from corinthos import __version__
 from corinthos.bootstrap import show_adapters
-from corinthos.contracts import ContractError
+from corinthos.contracts import ContractError, ContractStore
 from corinthos.project_status import MAX_ROOT_CHARS, _absolute_root, _inspect_path
 from corinthos.project_status import ProjectStatus as ProjectStatus
 from corinthos.project_status import project_status as project_status
@@ -45,6 +46,15 @@ class ProviderStatus:
 
 def version() -> VersionInfo:
     return VersionInfo(__version__)
+
+
+def diagnostics() -> dict:
+    """Describe this running interpreter and supported storage without opening state."""
+    return {
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+        "supported_schema_version": ContractStore.current_schema_version(),
+    }
 
 
 def _known_capabilities(row: dict, executable: str | None) -> KnownCapabilities | None:

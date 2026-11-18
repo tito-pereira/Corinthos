@@ -23,9 +23,13 @@ historical observations. An absent observation remains unobserved. A stale
 or nonmatching observation carries no current availability or command authority.
 The CLI returns a null provider section if it cannot read provider settings.
 
-The packaged React view shows the negotiated application and protocol versions,
-connection state, known provider status and the result of an explicit project
-path check. Rust owns process lifecycle and transports only these operations.
+The packaged React view shows a compact connection state and explicit project
+operations. Settings About / Diagnostics exposes application and protocol
+versions, the running Python implementation/version, supported storage schema
+and native desktop package identity. Selected-project schema and storage come
+from its passive summary. Bootstrap-only projects have no database schema.
+Unavailable values and previously observed values are labeled in the support
+view. Rust owns process lifecycle and transports these operations.
 The WebView receives no shell capability and ships its frontend locally.
 No-argument `corinthos` continues to open the CLI Home.
 
@@ -119,15 +123,32 @@ restart. Normal close requests shutdown. The bridge waits for a bounded
 interval, then terminates and reaps its child if needed. EOF also ends the
 sidecar.
 
+## Current desktop diagnostics
+
+RPC v2 advertises `system.diagnostics` with empty parameters. Its bounded result
+contains `python_implementation`, `python_version` and
+`supported_schema_version`. The operation reads the running interpreter and the
+storage service's static supported version. It opens no project or registry and
+performs no provider work.
+
+Native snapshots include the desktop package version and configured identifier,
+including during startup failure. A typed failure origin distinguishes startup
+unavailability from an established transport disconnection. The UI derives
+Connecting and Restarting from pending lifecycle requests and gates backend
+actions while offline. Selected project/navigation state survives disconnection
+and is refreshed passively when the connection returns.
+
 Windows CI builds the desktop and exercises the Rust/Python bridge against the
 checksum-verified private runtime, with repeated start/stop and provider
 sentinels. A separate build with the `desktop-smoke` feature observes real
-DOM values from the local WebView and exercises the project form. The regular
-desktop build excludes this test observer. The original installer test and
-both OS/Python backend matrices remain in place. Ubuntu verifies the Python
+DOM values from the local WebView and exercises current-version project and
+diagnostics flows. The regular desktop build excludes this test observer.
+Installer checks use current installation/reinstallation, recovery and uninstall
+fixtures. Ubuntu verifies the Python
 protocol through the package tests. Windows is the desktop build and WebView
 gate.
 
-Public desktop packaging and changes to the source installer belong to Phase 9.
-Work Items, a full Project State, Agent Sessions, Context Projection, import,
-provider switching and the complete Command view belong to later phases.
+The original Phase 1 delivery deferred public packaging, Work Items, full Project
+State, Agent Sessions, Context Projection, import, provider switching and Command
+to later phases. Their implemented behavior is documented in the subsequent
+phase guides.

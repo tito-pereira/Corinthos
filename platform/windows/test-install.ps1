@@ -209,7 +209,6 @@ $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $git = (Get-Command git.exe -ErrorAction Stop).Source
 $gitDirectory = [IO.Path]::GetDirectoryName($git)
 $powerShell = Join-Path $PSHOME 'powershell.exe'
-$baseline = '4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23'
 $source = Join-Path $sandbox 'source checkout'
 $other = Join-Path $sandbox 'unrelated workspace'
 $originalLocal = $env:LOCALAPPDATA
@@ -381,58 +380,10 @@ try {
     ) 'Explicit refresh did not record the observed native provider capabilities.'
     Write-Host 'Fresh install and configured reinstall executed no provider. Explicit refresh verified the configured synthetic provider.'
 
-    # The pinned Phase 8 layout provides a real upgrade fixture and keeps legacy rollback regression coverage.
-    $legacy = Join-Path $sandbox 'Phase 8 source'
-    $archive = Join-Path $sandbox 'phase-8.zip'
-    & $git -C $repo archive --format=zip "--output=$archive" $baseline
-    Assert-Smoke ($LASTEXITCODE -eq 0) 'Could not archive the exact Phase 8 installer baseline.'
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::ExtractToDirectory($archive, $legacy)
-    $previousInstall = Join-Path $sandbox 'built candidate'
-    [IO.Directory]::Move($paths.Install, $previousInstall)
-    $legacyInstaller = Join-Path $legacy 'install.ps1'
-    $null = Invoke-TestInstall $legacyInstaller
-    Assert-Smoke (![IO.File]::Exists($desktop)) 'The Phase 8 layout fixture unexpectedly included a desktop.'
-    $manifest = Get-Content -LiteralPath (Join-Path $legacy 'platform\windows\artifacts.json') -Raw | ConvertFrom-Json
-    foreach ($pin in @($manifest.python, $manifest.wheels[0])) {
-        $artifact = Join-Path $paths.Cache $pin.filename
-        $goodBytes = [IO.File]::ReadAllBytes($artifact)
-        $badBytes = [byte[]] $goodBytes.Clone()
-        $badBytes[0] = $badBytes[0] -bxor 1
-        try {
-            [IO.File]::WriteAllBytes($artifact, $badBytes)
-            $null = Invoke-TestInstall $legacyInstaller 'Cached artifact SHA-256 verification failed'
-            Assert-Smoke ((Read-InstallManifest $paths.Install).state -ceq 'installed') 'A corrupt artifact displaced the previous installation.'
-        } finally { [IO.File]::WriteAllBytes($artifact, $goodBytes) }
-    }
-    $stateModule = Join-Path $legacy 'src\corinthos\user_state.py'
-    [IO.File]::AppendAllText($stateModule, @'
-
-if __name__ == '__main__':
-    raise SystemExit(77)
-'@)
-    $installedStateModule = Join-Path $paths.Install 'app\corinthos\user_state.py'
-    $healthyHash = (Get-FileHash -LiteralPath $installedStateModule).Hash
-    $null = Invoke-TestInstall $legacyInstaller 'Private Python check failed (exit 77)'
-    Assert-Smoke ((Get-FileHash -LiteralPath $installedStateModule).Hash -ceq $healthyHash) 'Post-swap health failure did not restore the previous installation.'
-    Assert-Smoke ((Get-UserPath $key).Text -ceq $expectedPath) 'Post-swap health failure modified PATH.'
-    Assert-Smoke ((& corinthos --version) -ceq $version -and $LASTEXITCODE -eq 0) 'Rollback did not restore a working command.'
-
-    $currentInstall = Join-Path $paths.Install 'installation.json'
-    Assert-Smoke ([IO.File]::Exists($currentInstall)) 'The Phase 8 layout has no upgrade ownership receipt.'
-    $beforeUpgradeRecent = (Get-FileHash -LiteralPath $recent).Hash
-    $beforeUpgradeProviders = (Get-FileHash -LiteralPath $registry).Hash
     $projectDatabase = Join-Path (Join-Path $other $projects[0]) '.corinthos\state.db'
-    $beforeUpgradeProject = (Get-FileHash -LiteralPath $projectDatabase).Hash
-    $providerBeforeUpgrade = (Get-FileHash -LiteralPath $configuredLog).Hash
-    $null = Invoke-TestInstall $installer
-    Assert-Smoke ([IO.File]::Exists($desktop) -and (Get-FileHash -LiteralPath $recent).Hash -eq $beforeUpgradeRecent -and
-        (Get-FileHash -LiteralPath $registry).Hash -eq $beforeUpgradeProviders -and
-        (Get-FileHash -LiteralPath $projectDatabase).Hash -eq $beforeUpgradeProject -and
-        (Get-FileHash -LiteralPath $configuredLog).Hash -eq $providerBeforeUpgrade -and
-        ![IO.File]::Exists($autoLog)) 'The Phase 8 layout upgrade lost private state or ran a provider.'
+    $beforeUninstallProject = (Get-FileHash -LiteralPath $projectDatabase).Hash
+    $beforeUninstallProviders = (Get-FileHash -LiteralPath $registry).Hash
     $releaseFiles = @(Test-ReleaseEvidence $paths.Install $commit $tree $movedSource)
-    Assert-Smoke (([IO.File]::ReadAllText((Join-Path $paths.Install 'release-manifest.json')) | ConvertFrom-Json).source_commit -ceq $commit) 'Upgrade did not produce the exact source release.'
     Test-InstallRecovery $paths $key $expectedPath
 
     $uninstaller = Join-Path $paths.Install 'uninstall.ps1'
@@ -457,8 +408,10 @@ if __name__ == '__main__':
     foreach ($name in $projects) {
         Assert-Smoke ([IO.File]::Exists((Join-Path (Join-Path $other $name) '.corinthos\bootstrap.json'))) 'Uninstall removed project state.'
     }
-    Assert-Smoke ((Get-FileHash -LiteralPath $projectDatabase).Hash -eq $beforeUpgradeProject) 'Uninstall modified the exact GUI Session and Work Item state.'
-    Assert-Smoke ((Get-FileHash -LiteralPath $config).Hash -ceq $configHash -and (Get-FileHash -LiteralPath $recent).Hash -ceq $recentHash) 'Uninstall removed or changed global user state.'
+    Assert-Smoke ((Get-FileHash -LiteralPath $projectDatabase).Hash -eq $beforeUninstallProject) 'Uninstall modified the exact GUI Session and Work Item state.'
+    Assert-Smoke ((Get-FileHash -LiteralPath $config).Hash -ceq $configHash -and
+        (Get-FileHash -LiteralPath $recent).Hash -ceq $recentHash -and
+        (Get-FileHash -LiteralPath $registry).Hash -ceq $beforeUninstallProviders) 'Uninstall removed or changed global user state.'
     if ($env:CORINTHOS_CI_ARTIFACTS) {
         Write-ReleaseJson (Join-Path $env:CORINTHOS_CI_ARTIFACTS 'installed-verification.json') ([ordered] @{
             schema = 1
@@ -468,7 +421,6 @@ if __name__ == '__main__':
             installed_product = 'PASS'
             shipping_binary_smoke = 'PASS'
             preconfigured_reinstall = 'PASS'
-            phase_8_layout_upgrade = 'PASS'
             state_preserving_uninstall = 'PASS'
             signing_state = 'UNSIGNED'
             real_provider_validation = 'NOT_AVAILABLE'

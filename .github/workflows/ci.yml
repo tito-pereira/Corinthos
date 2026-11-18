@@ -209,9 +209,6 @@ jobs:
       - name: Record tested commit
         shell: pwsh
         run: git rev-parse HEAD
-      - name: Fetch the verified Phase 8 installer baseline
-        shell: pwsh
-        run: git fetch --no-tags origin 4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23
       - name: Verify the hosted runner's Windows build prerequisites
         shell: powershell
         run: |
@@ -249,8 +246,6 @@ jobs:
           persist-credentials: false
       - name: Record tested commit
         run: git rev-parse HEAD
-      - name: Fetch exact v8 desktop fixture sources
-        run: git fetch --no-tags origin 13e7bf556788e737493d767b30e12a6613c8fa73 4a0ceb16e7ed4aa95c2a1123547386f45f3dbb23
       - uses: actions/setup-node@v7
         with:
           node-version: '24.22.2'

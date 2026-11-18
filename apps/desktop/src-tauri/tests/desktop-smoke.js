@@ -45,7 +45,7 @@
   const view = (name) => buttonNamed(".project-views button", name === "Work Items" ? "Work" : name);
   const sha256 = (value) => /^[a-f0-9]{64}$/.test(value ?? "");
   const revealsSecret = (selector) => (text(document.querySelector(selector)) ?? "").includes(
-    "v8-fixture-hidden-value",
+    "current-fixture-hidden-value",
   );
   const adaptiveTask = "Adaptive fixture: add one local check";
   const adaptiveProject = "Adaptive fixture: inspect project planning";
@@ -454,16 +454,14 @@
 
   async function verify() {
     if (mode === "create") return verifyCreation();
+    const primary = (name) => buttonNamed(".primary-navigation button", name);
     const backendReady = await waitFor(() => {
-      const backend = document.querySelector("#backend-title")?.closest("section");
       const codex = Array.from(document.querySelectorAll(".providers li")).find(
         (row) => text(row.querySelector("h3")) === "codex",
       );
       const configuredPath = text(codex?.querySelector("code"));
       return (
         text(document.querySelector(".connection[role=status]")) === "Connected" &&
-        valueFor(backend, "Application version") === "0.1.0" &&
-        valueFor(backend, "RPC protocol") === "v2" &&
         text(codex?.querySelector(".provider-heading span")) === "Not yet observed" &&
         text(codex?.querySelector("p")) === "User setting" &&
         configuredPath &&
@@ -471,6 +469,29 @@
       );
     });
     if (!backendReady) return report("fail [backend]");
+    primary("Settings").click();
+    if (!(await waitFor(() => document.querySelector("details.diagnostics summary")))) return report("fail [backend]");
+    const disclosure = document.querySelector("details.diagnostics summary");
+    disclosure.click();
+    if (!(await waitFor(() => /^\w+ \d+\.\d+\.\d+$/.test(valueFor(
+      document.querySelector("#diagnostics-title")?.closest("section"), "Private runtime"))))) return report("fail [backend]");
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) return report("fail [backend]");
+    const snapshot = await invoke("backend_snapshot");
+    const runtime = await invoke("workspace_request", { method: "system.diagnostics", params: {} });
+    if (snapshot.connection !== "ready") return report("fail [backend]");
+    if (!(await waitFor(() => {
+      const diagnostics = document.querySelector("#diagnostics-title")?.closest("section");
+      return valueFor(diagnostics, "Application version") === snapshot.handshake.version &&
+        valueFor(diagnostics, "Desktop version") === snapshot.desktop.version &&
+        valueFor(diagnostics, "RPC protocol") === `v${snapshot.handshake.protocol_version}` &&
+        valueFor(diagnostics, "Backend state") === "Connected" &&
+        valueFor(diagnostics, "Private runtime") === `${runtime.python_implementation} ${runtime.python_version}` &&
+        valueFor(diagnostics, "Supported storage schema") === `v${runtime.supported_schema_version}` &&
+        valueFor(diagnostics, "Desktop identifier") === snapshot.desktop.identifier;
+    }))) return report("fail [backend]");
+    disclosure.click();
+    primary("Home").click();
     if (mode === "passive") {
       const invoke = window.__TAURI_INTERNALS__?.invoke;
       const rejects = async (command, params, message) => {
@@ -514,21 +535,16 @@
       const path = text(row.querySelector("code"));
       return path && normalizeWindowsPath(path) === normalizeWindowsPath(projectRoot);
     });
-    const legacyRegistry = await waitFor(() => {
+    const currentRegistry = await waitFor(() => {
       const missing = Array.from(document.querySelectorAll(".project-list li")).find(
         (row) => text(row.querySelector("h3")) === "missing-project",
       );
-      return text(projectRow()?.querySelector(".section-heading span")) === (startSessions ? "Current · v9" : "Older schema · v8") &&
+      return text(projectRow()?.querySelector(".section-heading span")) === "Current · v9" &&
         text(missing?.querySelector(".section-heading span")) === "Missing" &&
         projectRow()?.querySelector("button")?.matches(":enabled");
     });
-    if (!legacyRegistry) return report("fail [registry]");
+    if (!currentRegistry) return report("fail [registry]");
     projectRow().querySelector("button").click();
-    if (!startSessions) {
-      const migrate = () => buttonNamed(".onboarding-review button", "Migrate and open");
-      if (!(await waitFor(() => migrate()?.matches(":enabled")))) return report("fail [project]");
-      migrate().click();
-    }
 
     const projectShown = await waitFor(() => {
       const project = document.querySelector(".project-result");
@@ -593,11 +609,13 @@
         text(work) === "Preserve this Work Item";
     });
     if (!passive) return report("fail [agents]");
-    const legacySession = document.querySelector(".session-list li[data-state=SUCCEEDED] button");
-    if (!legacySession?.matches(":enabled")) return report("fail [binding]");
-    legacySession.click();
+    const existingSession = document.querySelector(".session-list li[data-state=SUCCEEDED] button");
+    if (!existingSession?.matches(":enabled")) return report("fail [binding]");
+    existingSession.click();
     if (!(await waitFor(() => valueFor(document.querySelector(".session-detail"), "State") === "SUCCEEDED")) ||
-        document.querySelector(".session-projection")) return report("fail [binding]");
+        !(await waitFor(() => sha256(valueFor(document.querySelector(".session-projection"), "Context digest"))))) {
+      return report("fail [binding]");
+    }
     if (!startSessions) {
       const passiveTarget = document.querySelector("#switch-target-provider");
       if (!passiveTarget) return report("fail [switch]");

@@ -30,6 +30,12 @@ leave provider settings and observations untouched and run no provider CLIs.
 Choose **Settings > Providers > Refresh** or run `corinthos adapters refresh` to
 request capability checks explicitly.
 
+The compact connection control shows startup, connection and restart progress.
+Use **Settings > About / Diagnostics** for application, protocol, private runtime,
+storage and desktop identity details. Support details and **Reconnect** are also
+available when the backend cannot connect. Reconnection restores the selected
+project and view through fresh read-only backend projections.
+
 Setup builds the desktop and console launcher locally, stages the private
 CPython 3.14.10 runtime and verifies both entry points before promotion.
 Downloads are verified against the [runtime pins](platform/windows/artifacts.json)
