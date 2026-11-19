@@ -140,9 +140,11 @@ function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [
     Copy-ApplicationFiles (Join-Path $Source 'src\corinthos') (Join-Path $candidate 'app\corinthos')
     [IO.File]::WriteAllLines((Join-Path $candidate 'runtime\python314._pth'), @('python314.zip', '.', '..\app'))
     $launcherSource = Join-Path $Source 'platform\windows\launcher.cs'
+    $launcherIcon = Join-Path $Source 'apps\desktop\src-tauri\icons\icon.ico'
     $launcher = Join-Path $candidate 'bin\corinthos.exe'
     Assert-PlainPath $launcherSource
-    & $Compiler /nologo /target:exe /platform:x64 "/out:$launcher" $launcherSource | Out-Host
+    Assert-PlainPath $launcherIcon
+    & $Compiler /nologo /target:exe /platform:x64 "/out:$launcher" "/win32icon:$launcherIcon" $launcherSource | Out-Host
     if ($LASTEXITCODE -ne 0 -or ![IO.File]::Exists($launcher)) { throw 'Could not compile the local launcher.' }
     [IO.File]::Copy($manifestPath, (Join-Path $candidate 'resources\artifacts.json'))
     [IO.File]::Copy((Join-Path $Source 'LICENSE'), (Join-Path $candidate 'resources\LICENSE'))

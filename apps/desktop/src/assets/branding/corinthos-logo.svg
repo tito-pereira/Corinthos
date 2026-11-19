@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 112">
+  <g transform="translate(0 4)" fill="#11213b">
+    <path d="M7 29 48 10 89 29 87 34 48 16 9 34Z"/>
+    <path d="M14 32H82V37H14Z"/>
+    <path d="M18 41H24V77H18ZM31.5 41H37.5V77H31.5ZM45 41H51V77H45ZM58.5 41H64.5V77H58.5ZM72 41H78V77H72Z"/>
+    <path d="M14 79H82V84H14ZM8 88H88V93H8Z"/>
+  </g>
+  <text x="115" y="76" fill="#11213b" font-family="Segoe UI, Arial, sans-serif" font-size="62" font-weight="800" letter-spacing="0.4">CORINTHOS</text>
+</svg>

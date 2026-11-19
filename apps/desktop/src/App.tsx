@@ -15,6 +15,7 @@ import {
 } from "./bridge";
 import { Agents } from "./Agents";
 import { BackendDiagnostics, connectionLabels, type ConnectionState } from "./BackendDiagnostics";
+import corinthosLogo from "./assets/branding/corinthos-logo.svg?no-inline";
 import { Command } from "./Command";
 import { ContextAudit } from "./ContextAudit";
 import { DirectorySelection } from "./DirectorySelection";
@@ -758,7 +759,7 @@ export function App() {
     <main>
       <header className="masthead">
         <div>
-          <h1>Corinthos</h1>
+          <h1><img className="brand-logo" src={corinthosLogo} alt="" /><span className="visually-hidden">Corinthos</span></h1>
           <p>Local project operations</p>
         </div>
         <div className="connection-control">

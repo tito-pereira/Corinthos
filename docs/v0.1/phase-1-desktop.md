@@ -33,6 +33,45 @@ view. Rust owns process lifecycle and transports these operations.
 The WebView receives no shell capability and ships its frontend locally.
 No-argument `corinthos` continues to open the CLI Home.
 
+## Corinthos brand assets
+
+The masthead and About / Diagnostics share the local
+[`corinthos-logo.svg`](../../apps/desktop/src/assets/branding/corinthos-logo.svg).
+Its five-column navy building follows the owner's approved architecture
+reference (SHA-256
+`34e2583becc63129194d3e5551cd3f6493f17965665cd3997c2f1be0d9ff4ab3`).
+The original diagram and visual-reference extract remain outside the public
+checkout. Production geometry is recreated as SVG rather than using a raster
+diagram as an application icon.
+
+[`corinthos-symbol.svg`](../../apps/desktop/src/assets/branding/corinthos-symbol.svg)
+is the font-free icon source. The complete logo repeats that geometry with the
+[`wordmark`](../../apps/desktop/src/assets/branding/corinthos-wordmark.svg),
+using the existing Segoe UI / sans-serif family. Keep these authoring sources
+consistent when editing the building or wordmark. Compact variants show the
+symbol alone; the same assets can be reused by the later sidebar work.
+
+Generate raster resources with the existing locked Tauri CLI, from
+`apps/desktop/` in PowerShell:
+
+```powershell
+npm.cmd run tauri -- icon src/assets/branding/corinthos-symbol.svg --output ../../build/feature-verification/brand-assets/icon-export
+Copy-Item ../../build/feature-verification/brand-assets/icon-export/icon.ico src-tauri/icons/icon.ico -Force
+Copy-Item ../../build/feature-verification/brand-assets/icon-export/icon.png src-tauri/icons/icon.png -Force
+npm.cmd run tauri -- icon src/assets/branding/corinthos-symbol.svg --output src-tauri/icons --png 16 --png 24 --png 32 --png 48 --png 128 --png 256
+```
+
+The temporary export includes other platforms; only the Windows ICO, canonical
+PNG and listed square PNG sizes belong in the product icon directory. Tauri's
+existing build embeds the ICO into the desktop executable, and the Windows
+launcher compiler embeds the same ICO. Bundling remains disabled; distribution
+copies the branded executables through its existing paths. No additional
+installer or shortcut system is introduced.
+
+For branding changes, inspect the actual production executable resources and
+one isolated window/taskbar view as well as the frontend. A development image
+alone does not establish which icons were embedded in the shipped binaries.
+
 ## Native directory selection
 
 Create, Open and repository Import share a directory-selection control. Its

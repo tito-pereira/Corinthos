@@ -235,6 +235,22 @@ describe("backend status and diagnostics", () => {
   const runtime = { python_implementation: "CPython", python_version: "3.14.10", supported_schema_version: 9 };
   const diagnosticReady = { ...ready, handshake: { ...ready.handshake, methods: [...methods, "system.diagnostics"] } };
 
+  it("shares the Corinthos brand without duplicating its accessible name", async () => {
+    invoke.mockResolvedValueOnce(ready).mockResolvedValueOnce({ projects: [], next_offset: null });
+    await render();
+    const heading = host.querySelector("h1");
+    const mastheadLogo = heading?.querySelector("img");
+    expect(heading?.textContent).toBe("Corinthos");
+    expect(mastheadLogo?.getAttribute("alt")).toBe("");
+    expect(mastheadLogo?.getAttribute("src")).toContain("corinthos-logo.svg");
+    await click("Settings");
+    await openDiagnostics();
+    const aboutLogo = host.querySelector(".diagnostics .brand-logo");
+    expect(aboutLogo?.getAttribute("src")).toBe(mastheadLogo?.getAttribute("src"));
+    expect(aboutLogo?.getAttribute("alt")).toBe("");
+    expect(invoke.mock.calls).toHaveLength(2);
+  });
+
   it("reads runtime details only through explicit Settings diagnostics", async () => {
     invoke.mockImplementation(async (command, payload) => {
       if (command === "backend_snapshot") return diagnosticReady;

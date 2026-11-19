@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { BackendSnapshot, ProjectSummary, RuntimeDiagnostics } from "./bridge";
+import corinthosLogo from "./assets/branding/corinthos-logo.svg?no-inline";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "restarting" | "unavailable";
 
@@ -34,6 +35,7 @@ export function BackendDiagnostics({ snapshot, connection, runtime, project, pro
   return <details className="diagnostics" open={open} onToggle={(event) => onToggle(event.currentTarget.open)}>
     <summary>About / Diagnostics</summary>
     {open && <section aria-labelledby="diagnostics-title">
+      <img className="brand-logo diagnostics-brand" src={corinthosLogo} alt="" />
       <div className="section-heading"><h2 id="diagnostics-title">Diagnostics</h2></div>
       <dl className="facts">
         <div><dt>Application version</dt><dd>{observed(handshake?.version)}</dd></div>
