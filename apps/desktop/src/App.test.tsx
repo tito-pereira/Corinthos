@@ -120,7 +120,16 @@ describe("desktop Home and Projects", () => {
     invoke.mockResolvedValueOnce({ projects: [legacy, missing], next_offset: null });
     await render();
     expect(host.textContent).toContain("Connecting");
+    const navigation = host.querySelector(".app-sidebar .primary-navigation");
+    expect(Array.from(navigation!.querySelectorAll("button"), (button) => button.textContent))
+      .toEqual(["Home", "Command", "Projects", "Settings"]);
+    expect(Array.from(navigation!.querySelectorAll("button")).every((button) => button.disabled)).toBe(true);
+    await click("Projects");
+    expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
     await act(async () => respond(ready));
+    expect(host.querySelector(".workspace-content .primary-navigation")).toBeNull();
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".primary-navigation button"))
+      .every((button) => !button.disabled)).toBe(true);
     expect(host.textContent).not.toContain("0.1.0");
     expect(host.querySelector("#backend-title")).toBeNull();
     expect(host.textContent).toContain("Not yet observed");
@@ -240,6 +249,10 @@ describe("backend status and diagnostics", () => {
     await render();
     const heading = host.querySelector("h1");
     const mastheadLogo = heading?.querySelector("img");
+    expect(heading?.closest(".app-sidebar")).not.toBeNull();
+    expect(host.querySelector(".app-sidebar .brand-symbol")?.getAttribute("src"))
+      .toContain("corinthos-symbol.svg");
+    expect(host.querySelector(".app-sidebar .connection-control")).not.toBeNull();
     expect(heading?.textContent).toBe("Corinthos");
     expect(mastheadLogo?.getAttribute("alt")).toBe("");
     expect(mastheadLogo?.getAttribute("src")).toContain("corinthos-logo.svg");
@@ -334,7 +347,10 @@ describe("backend status and diagnostics", () => {
     await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
     await act(async () => finish(ready));
     expect(host.querySelector(".connection")?.textContent).toBe("Disconnected");
-    expect(host.querySelector(".primary-navigation")).toBeNull();
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".primary-navigation button")))
+      .toHaveLength(4);
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".primary-navigation button"))
+      .every((button) => button.disabled)).toBe(true);
     expect(invoke.mock.calls).toEqual([["backend_snapshot"]]);
   });
 
@@ -355,7 +371,8 @@ describe("backend status and diagnostics", () => {
     await act(async () => lifecycle({ payload: { method: "backend.disconnected" } }));
     await act(async () => finish(ready));
     expect(host.querySelector(".connection")?.textContent).toBe("Disconnected");
-    expect(host.querySelector(".primary-navigation")).toBeNull();
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".primary-navigation button"))
+      .every((button) => button.disabled)).toBe(true);
     invoke.mockResolvedValueOnce({ connection: "unavailable", desktop: ready.desktop,
       failure_origin: "startup", error: "The private runtime could not start." });
     await click("Reconnect");
@@ -1334,6 +1351,12 @@ describe("desktop Command and project navigation", () => {
     await click("Open Context Projection");
     expect(host.querySelector(".projection-detail")?.textContent).toContain(projection.projection_digest);
     await click("Work");
+    expect(host.querySelector(".work-selection")?.textContent).toContain(item.work_item_id);
+    expect(host.querySelector(".workspace-content .project-views")).not.toBeNull();
+    expect(host.querySelector(".app-sidebar .project-views")).toBeNull();
+    await click("Settings");
+    await click("Projects");
+    expect(host.querySelector(".project-result code")?.textContent).toBe(first.root);
     expect(host.querySelector(".work-selection")?.textContent).toContain(item.work_item_id);
     expect(invoke.mock.calls.map(([_command, args]) => args?.method)).not.toContain("project.open");
   });

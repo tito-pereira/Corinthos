@@ -16,6 +16,7 @@ import {
 import { Agents } from "./Agents";
 import { BackendDiagnostics, connectionLabels, type ConnectionState } from "./BackendDiagnostics";
 import corinthosLogo from "./assets/branding/corinthos-logo.svg?no-inline";
+import corinthosSymbol from "./assets/branding/corinthos-symbol.svg?no-inline";
 import { Command } from "./Command";
 import { ContextAudit } from "./ContextAudit";
 import { DirectorySelection } from "./DirectorySelection";
@@ -28,6 +29,35 @@ type Screen = "Home" | "Command" | "Projects" | "Settings";
 type Onboarding = "create" | "open" | "import" | null;
 type ImportDraft = { path: string; uncertain: boolean };
 const screens: Screen[] = ["Home", "Command", "Projects", "Settings"];
+
+function ApplicationShell({ screen, navigate, disabled, connection, onReconnect, children }: {
+  screen: Screen;
+  navigate: (value: Screen) => void;
+  disabled: boolean;
+  connection: ConnectionState;
+  onReconnect: () => void;
+  children: ReactNode;
+}) {
+  return <div className="app-shell">
+    <aside className="app-sidebar" aria-label="Corinthos navigation">
+      <header className="masthead">
+        <h1><img className="brand-logo" src={corinthosLogo} alt="" />
+          <img className="brand-symbol" src={corinthosSymbol} alt="" />
+          <span className="visually-hidden">Corinthos</span></h1>
+      </header>
+      <nav className="primary-navigation" aria-label="Primary navigation">
+        {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
+          disabled={disabled} onClick={() => navigate(name)}>{name}</button>)}
+      </nav>
+      <div className="connection-control">
+        <span className={`connection ${connection}`} role="status">{connectionLabels[connection]}</span>
+        {(connection === "disconnected" || connection === "unavailable") &&
+          <button type="button" onClick={onReconnect}>Reconnect</button>}
+      </div>
+    </aside>
+    <main className="workspace-content">{children}</main>
+  </div>;
+}
 
 type CreationState = {
   name: string;
@@ -113,7 +143,7 @@ function RegistryEntry({ entry, busy, inspect, open }: {
 }
 
 function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate, importDraft, onImportDraft,
-  screen, setScreen, view, setView, project, setProject, selectedWork, setSelectedWork, renderDiagnostics }: {
+  screen, setScreen, view, setView, project, setProject, selectedWork, setSelectedWork, renderDiagnostics, renderShell }: {
   methods: string[];
   providers: ProviderStatus[];
   onProviders: (value: ProviderStatus[]) => void;
@@ -131,6 +161,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   selectedWork: Record<string, string>;
   setSelectedWork: Dispatch<SetStateAction<Record<string, string>>>;
   renderDiagnostics: (projectCurrent: boolean) => ReactNode;
+  renderShell: (children: ReactNode, navigate: (value: Screen) => void, disabled: boolean) => ReactNode;
 }) {
   const [flow, setFlow] = useState<Onboarding>(creation.shown ? "create" : importDraft.uncertain ? "import" : null);
   const [openRoot, setOpenRoot] = useState("");
@@ -394,12 +425,8 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
   const activeTab = tabs.some((tab) => tab.enabled && view.tab === tab.tab) ? view.tab : "overview";
   const activeWorkId = project ? selectedWork[project.root] ?? view.id : undefined;
 
-  return (
+  return renderShell(
     <>
-      <nav className="primary-navigation" aria-label="Primary navigation">
-        {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
-          disabled={importMutating} onClick={() => changeScreen(name)}>{name}</button>)}
-      </nav>
       {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
       {screen === "Settings" && <>
         {renderDiagnostics(!refreshingSelection)}
@@ -588,7 +615,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
           )}
         </section>
       )}
-    </>
+    </>, changeScreen, importMutating
   );
 }
 
@@ -755,41 +782,30 @@ export function App() {
   const ready = connection === "connected" && snapshot?.connection === "ready";
   const generation = request.current;
 
-  return (
-    <main>
-      <header className="masthead">
-        <div>
-          <h1><img className="brand-logo" src={corinthosLogo} alt="" /><span className="visually-hidden">Corinthos</span></h1>
-          <p>Local project operations</p>
-        </div>
-        <div className="connection-control">
-          <span className={`connection ${connection}`} role="status">{connectionLabels[connection]}</span>
-          {(connection === "disconnected" || connection === "unavailable") &&
-            <button type="button" onClick={() => void reconnect()}>Reconnect</button>}
-        </div>
-      </header>
-
-      {!ready && <section aria-labelledby="support-title">
-        <div className="section-heading"><h2 id="support-title">Backend support</h2></div>
-        {failure && <p role="alert">{failure}</p>}
-        <p>{connection === "connecting" ? "Waiting for the sidecar handshake."
-          : connection === "restarting" ? "Restarting the sidecar."
-          : "Check the private runtime and reconnect when it is available."}</p>
-        {diagnostics(true)}
-      </section>}
-
+  function renderShell(children: ReactNode, navigate: (value: Screen) => void, disabled: boolean) {
+    return <ApplicationShell screen={screen} navigate={navigate} disabled={disabled} connection={connection}
+      onReconnect={() => void reconnect()}>
       {creation.pending && <p role="status">Creating project. The outcome is not yet confirmed. Leaving this form does not cancel backend initialization.</p>}
       {creation.error && <div role="alert"><p>{creation.error}</p>
         <p>{creation.name} <code>{creation.root}</code></p>
       </div>}
-      {ready && <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
+      {children}
+    </ApplicationShell>;
+  }
+
+  return ready ? <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
         creation={creation} onCreation={setCreation} onCreate={createProject} importDraft={importDraft} onImportDraft={setImportDraft}
         screen={screen} setScreen={setScreen} view={view} setView={setView} project={project} setProject={setProject}
-        selectedWork={selectedWork} setSelectedWork={setSelectedWork} renderDiagnostics={diagnostics}
+        selectedWork={selectedWork} setSelectedWork={setSelectedWork} renderDiagnostics={diagnostics} renderShell={renderShell}
         onProviders={(providers) => {
           if (request.current === generation) setSnapshot((current) => current?.connection === "ready"
             ? { ...current, providers: { providers } } : current);
-        }} />}
-    </main>
-  );
+        }} /> : renderShell(<section aria-labelledby="support-title">
+          <div className="section-heading"><h2 id="support-title">Backend support</h2></div>
+          {failure && <p role="alert">{failure}</p>}
+          <p>{connection === "connecting" ? "Waiting for the sidecar handshake."
+            : connection === "restarting" ? "Restarting the sidecar."
+            : "Check the private runtime and reconnect when it is available."}</p>
+          {diagnostics(true)}
+        </section>, () => {}, true);
 }

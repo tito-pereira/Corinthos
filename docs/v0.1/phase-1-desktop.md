@@ -35,7 +35,7 @@ No-argument `corinthos` continues to open the CLI Home.
 
 ## Corinthos brand assets
 
-The masthead and About / Diagnostics share the local
+The sidebar masthead and About / Diagnostics share the local
 [`corinthos-logo.svg`](../../apps/desktop/src/assets/branding/corinthos-logo.svg).
 Its five-column navy building follows the owner's approved architecture
 reference (SHA-256
@@ -48,8 +48,8 @@ diagram as an application icon.
 is the font-free icon source. The complete logo repeats that geometry with the
 [`wordmark`](../../apps/desktop/src/assets/branding/corinthos-wordmark.svg),
 using the existing Segoe UI / sans-serif family. Keep these authoring sources
-consistent when editing the building or wordmark. Compact variants show the
-symbol alone; the same assets can be reused by the later sidebar work.
+consistent when editing the building or wordmark. The compact sidebar shows
+the symbol alone while retaining the Corinthos accessible heading name.
 
 Generate raster resources with the existing locked Tauri CLI, from
 `apps/desktop/` in PowerShell:
@@ -71,6 +71,27 @@ installer or shortcut system is introduced.
 For branding changes, inspect the actual production executable resources and
 one isolated window/taskbar view as well as the frontend. A development image
 alone does not establish which icons were embedded in the shipped binaries.
+
+## Coastal navigation shell
+
+Home, Command, Projects and Settings remain in a reserved right-side sidebar.
+The compact connection control stays near its bottom, including during startup
+and reconnect. While the backend is unavailable the four navigation buttons
+remain visible but disabled. About / Diagnostics remains explicitly available
+in Settings and the backend-support view.
+
+At the 620 by 480 minimum size the sidebar becomes a narrow rail with the
+building symbol and visible navigation labels. Main content occupies its own
+column; long paths and project names wrap, and project tabs remain inside the
+project content. Global navigation preserves the current project and selected
+Work Item and retains the existing guards around import mutations and late
+responses. Active navigation has both `aria-current` and a visible marker/weight;
+keyboard focus has an explicit outline.
+
+The shared stylesheet defines semantic coastal tokens for blue global surfaces,
+warm content panels, navy text and restrained yellow actions. Failed/blocked
+states remain red, connected/verified states remain green, and unknown states
+remain neutral. The palette does not change the meaning of operational states.
 
 ## Native directory selection
 
