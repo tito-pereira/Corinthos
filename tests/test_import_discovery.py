@@ -37,6 +37,8 @@ def worktree(tmp_path, request):
     _git(root, "config", "user.name", "Synthetic import fixture")
     _git(root, "config", "user.email", "fixture@example.invalid")
     _git(root, "config", "core.autocrlf", "false")
+    # Keep Git's background maintenance from changing preservation fingerprints.
+    _git(root, "config", "maintenance.auto", "false")
     _write(root, "README.md", "# Shipping fixture\n")
     _write(root, "src/café.py", "load = 1\n")
     _write(root, "tests/test_shipping.py", "def test_fixture(): pass\n")
