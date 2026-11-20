@@ -5,6 +5,9 @@ use serde_json::Value;
 
 const WORKSPACE_METHODS: &[&str] = &[
     "system.diagnostics",
+    "update.check",
+    "update.start",
+    "update.status",
     "command.overview",
     "command.project",
     "settings.providers",
@@ -58,6 +61,18 @@ pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
     if method == "system.diagnostics" && params.as_object().is_none_or(|value| !value.is_empty()) {
         return Err("Diagnostics does not accept parameters.");
     }
+    if method.starts_with("update.") {
+        let fields = params.as_object().ok_or("Invalid update request.")?;
+        if fields.keys().any(|key| key != "operation_id")
+            || (method == "update.check" && !fields.is_empty())
+            || (method == "update.start" && !fields.contains_key("operation_id"))
+            || fields.get("operation_id").is_some_and(|value| {
+                !value.as_str().is_some_and(valid_update_id)
+            })
+        {
+            return Err("Supply a valid update operation identifier.");
+        }
+    }
     if method == "project.create"
         && (params.as_object().is_none_or(|value| value.len() != 2)
             || !params.get("root").is_some_and(Value::is_string)
@@ -106,6 +121,11 @@ pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
     Ok(())
 }
 
+pub fn valid_update_id(value: &str) -> bool {
+    value.len() == 32
+        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 pub(crate) fn valid_root(root: &str) -> bool {
     if root.chars().any(char::is_control) || root.chars().count() > 4096 {
         return false;
@@ -129,6 +149,23 @@ mod tests {
         assert!(validate("system.diagnostics", &json!({})).is_ok());
         assert!(validate("system.diagnostics", &json!({"root": "/project"})).is_err());
         assert!(validate("system.diagnostics", &json!([])).is_err());
+    }
+
+    #[test]
+    fn update_admission_accepts_only_bounded_operation_identifiers() {
+        let operation = "a".repeat(32);
+        assert!(validate("update.check", &json!({})).is_ok());
+        assert!(validate("update.status", &json!({})).is_ok());
+        for method in ["update.start", "update.status"] {
+            assert!(validate(method, &json!({"operation_id": operation})).is_ok());
+            for value in [json!(null), json!(""), json!("A".repeat(32)), json!("../candidate"), json!(1)] {
+                assert!(validate(method, &json!({"operation_id": value})).is_err());
+            }
+        }
+        assert!(validate("update.start", &json!({})).is_err());
+        assert!(validate("update.check", &json!({"operation_id": operation})).is_err());
+        assert!(validate("update.status", &json!({"url": "https://example.test"})).is_err());
+        assert!(validate("update.finish", &json!({"operation_id": operation})).is_err());
     }
 
     #[test]
@@ -253,6 +290,7 @@ mod tests {
                 "allow-workspace-request",
                 "allow-restart-backend",
                 "allow-select-project-directory",
+                "allow-finish-update",
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
             ]),

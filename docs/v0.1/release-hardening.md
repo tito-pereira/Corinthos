@@ -60,9 +60,14 @@ it with Windows SignTool `verify /pa` and regenerate the signed artifact
 checksums and provenance. Do not pass signing secrets to application builds.
 Public distribution remains pending an owner signing disposition.
 
-The auto-updater is `NOT_CONFIGURED`. Build the next reviewed source manually
-with the same installer. Real cross-provider verification is `NOT_AVAILABLE`
-in the current owner environment and is independent of release readiness.
+The explicit updater uses official stable releases and a pinned Ed25519-signed
+manifest for same-project-schema Windows updates. It is shared by Settings and
+`corinthos update`; startup does not install updates. See the
+[updater and recovery guide](updater.md) for signing, complete-payload checks,
+runtime admission and rollback. Publishing a signed release remains a separate
+authorized action; a live newer signed release is not implied. The source
+installer remains available. Real cross-provider verification is
+`NOT_AVAILABLE` in the current owner environment and is independent of release readiness.
 
 ## Trust boundaries
 
@@ -84,4 +89,6 @@ override limited to contributor builds. No Corinthos telemetry or automatic
 update traffic is configured. Installer requests reach Python.org,
 files.pythonhosted.org, Node.js, the npm registry, Rust distribution,
 crates.io and official Microsoft prerequisite endpoints. Optional chosen
-native providers handle their own network requests.
+native providers handle their own network requests. Explicit update checks and
+downloads use the fixed official GitHub release channel; ordinary startup and
+saved-status reads do not make those requests.

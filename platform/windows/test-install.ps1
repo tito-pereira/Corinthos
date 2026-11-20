@@ -123,7 +123,7 @@ function Test-ReleaseEvidence([string] $Install, [string] $Commit, [string] $Tre
     Assert-Smoke ($manifest.product_version -ceq '0.1.0' -and
         $manifest.python_runtime -ceq '3.14.10' -and $manifest.rpc_protocol -eq 2 -and $manifest.sqlite_schema -eq 9 -and
         $manifest.source_commit -ceq $Commit -and $manifest.source_tree -ceq $Tree -and
-        $manifest.signing_state -ceq 'UNSIGNED' -and $manifest.auto_updater -ceq 'NOT_CONFIGURED' -and
+        $manifest.signing_state -ceq 'UNSIGNED' -and $manifest.auto_updater -ceq 'EXPLICIT_SIGNED_MANIFEST' -and
         $manifest.real_provider_validation -ceq 'NOT_AVAILABLE') 'Release manifest did not identify the exact candidate and platform capabilities.'
     Assert-Smoke (!$manifestText.Contains($Source.Replace('\', '\\')) -and
         !$manifestText.Contains($Install.Replace('\', '\\')) -and

@@ -102,7 +102,7 @@ function Write-CorinthosReleaseRecord([string] $Source, [string] $Candidate, $Pr
         build_tools = $provenanceTools
         prerequisite_bootstrap_signers = $prerequisites
         signing_state = 'UNSIGNED'
-        auto_updater = 'NOT_CONFIGURED'
+        auto_updater = 'EXPLICIT_SIGNED_MANIFEST'
         real_provider_validation = 'NOT_AVAILABLE'
         installed_payload_bytes = $payloadBytes
     })

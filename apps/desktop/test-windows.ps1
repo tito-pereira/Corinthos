@@ -76,8 +76,10 @@ try {
     }
     $script:InstallPercent = 0
     $candidate = New-PrivateRuntimeCandidate $repo $paths $work (Get-LauncherCompiler)
-    $null = Test-InstallCandidate $candidate
+    $version = Test-InstallCandidate $candidate
+    Write-InstallManifest $candidate 'staged' $version $work
     [IO.Directory]::Move($candidate, $paths.Install)
+    Write-InstallManifest $paths.Install 'installed' $version $work
     $python = Join-Path $paths.Install 'runtime\python.exe'
     Invoke-PrivatePython $paths.Install @('-m', 'corinthos.user_state')
 

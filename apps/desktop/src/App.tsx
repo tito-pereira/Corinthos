@@ -23,6 +23,7 @@ import { DirectorySelection } from "./DirectorySelection";
 import { ProjectOverview, ProjectValidation } from "./ProjectDetail";
 import { RepositoryImport } from "./RepositoryImport";
 import { Providers, ProviderSettings } from "./ProviderSettings";
+import { ProductUpdate } from "./ProductUpdate";
 import { WorkItems } from "./WorkItems";
 
 type Screen = "Home" | "Command" | "Projects" | "Settings";
@@ -430,6 +431,7 @@ function Workspace({ methods, providers, onProviders, creation, onCreation, onCr
       {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
       {screen === "Settings" && <>
         {renderDiagnostics(!refreshingSelection)}
+        <ProductUpdate methods={methods} />
         <ProviderSettings methods={methods} root={project?.root} providers={providers} onProviders={onProviders} />
       </>}
       {handlesProjects && <section aria-labelledby="projects-title">

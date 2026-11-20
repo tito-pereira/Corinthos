@@ -9,6 +9,7 @@
     "allow-workspace-request",
     "allow-restart-backend",
     "allow-select-project-directory",
+    "allow-finish-update",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

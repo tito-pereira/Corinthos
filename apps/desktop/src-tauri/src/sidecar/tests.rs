@@ -72,7 +72,29 @@ fn fixture(mode: &str, timeout: Duration, events: EventSink) -> Result<(Sidecar,
         python_command(&fixture_python(), &["-c", FIXTURE, mode]),
         events,
         timeout,
+        &CORE_METHODS,
     )
+}
+
+#[test]
+fn installation_health_negotiates_only_read_only_methods() {
+    let (mut child, handshake) = Sidecar::start_installation_check(&fixture_python()).unwrap();
+    assert_eq!(handshake.protocol_version, PROTOCOL_VERSION);
+    assert_eq!(handshake.methods, INSTALLATION_METHODS);
+    assert_eq!(child.version().unwrap(), json!({"version": env!("CARGO_PKG_VERSION")}));
+    child.shutdown_gracefully().unwrap();
+    assert!(child.child.try_wait().unwrap().unwrap().success());
+}
+
+#[test]
+fn ordinary_startup_rejects_a_health_only_peer() {
+    let result = Sidecar::launch(
+        python_command(&fixture_python(), &["-m", "corinthos.application.sidecar", "--installation-check"]),
+        no_events(),
+        HANDSHAKE_TIMEOUT,
+        &CORE_METHODS,
+    );
+    assert!(result.is_err());
 }
 
 #[test]
@@ -238,7 +260,7 @@ fn creation_uses_the_real_backend_and_preserves_retry_identity() {
     let mut command = python_command(&fixture_python(), &["-m", "corinthos.application.sidecar"]);
     command.env("LOCALAPPDATA", directory.join("user"));
     command.env("XDG_STATE_HOME", directory.join("user"));
-    let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT).unwrap();
+    let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT, &CORE_METHODS).unwrap();
     assert!(handshake.supports("project.create"));
     for attempt in 1..=2 {
         let summary = child.request("project.create", json!({

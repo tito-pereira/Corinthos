@@ -13,7 +13,7 @@ from tempfile import NamedTemporaryFile
 from corinthos.contracts import IntegrityError
 from corinthos.contracts.artifacts import is_link
 
-_FILES = {"config.json", "providers.json", "recent-projects.json"}
+_FILES = {"config.json", "providers.json", "recent-projects.json", "updates.json"}
 _MAX_BYTES = 128 * 1024
 
 

@@ -16,6 +16,7 @@ from corinthos.application import (
     providers_status,
     reviews,
     settings,
+    updates,
     version,
     workspace,
 )
@@ -43,6 +44,10 @@ _WORK_CONTENT = (
     "depends_on",
 )
 _V2_OPERATIONS = {
+    "update.check": (updates.update_check, (), ()),
+    "update.start": (updates.update_start, ("operation_id",), ()),
+    "update.status": (updates.update_status, (), ("operation_id",)),
+    "update.finish": (updates.update_finish, ("operation_id",), ("restart_gui",)),
     "system.diagnostics": (diagnostics, (), ()),
     "command.overview": (command.command_overview, (), _PAGE_OPTIONS),
     "command.project": (command.command_project, ("root",), ()),
@@ -150,6 +155,9 @@ _SESSION_OPERATIONS = {
     ),
 }
 _MUTATIONS = {
+    "update.check",
+    "update.start",
+    "update.finish",
     "providers.refresh",
     "provider.configure",
     "provider.reset",
@@ -241,9 +249,12 @@ def _params(message: dict, *, required=(), optional=()) -> dict:
 
 
 def _dispatch(
-    message: dict, negotiated: int | None, sessions: SessionApplication
+    message: dict, negotiated: int | None, sessions: SessionApplication, *, health: bool = False
 ) -> tuple[dict, int | None, bool]:
     method = message["method"]
+    health_methods = ("system.handshake", "system.version", "system.shutdown")
+    if health and method not in health_methods:
+        raise _RpcError(-32601)
     if method == "system.handshake":
         received = _params(message, required=("protocol_version",))["protocol_version"]
         if type(received) is not int:
@@ -256,7 +267,9 @@ def _dispatch(
             {
                 "protocol_version": received,
                 "version": version().version,
-                "methods": [*_V1_METHODS, *_V2_OPERATIONS, *_SESSION_OPERATIONS]
+                "methods": list(health_methods)
+                if health
+                else [*_V1_METHODS, *_V2_OPERATIONS, *_SESSION_OPERATIONS]
                 if received == 2
                 else list(_V1_METHODS),
             },
@@ -294,6 +307,8 @@ def _dispatch(
         from corinthos.work import WorkError
 
         try:
+            if method == "update.finish" and sessions.supervisor.has_active():
+                return updates.busy_status(params["operation_id"]), negotiated, False
             return operation(**params), negotiated, False
         except (SessionError, WorkError):
             raise _RpcError(-32602) from None
@@ -368,16 +383,21 @@ def _notify(output: BinaryIO, method: str, params: dict) -> None:
     _write(output, {"jsonrpc": "2.0", "method": method, "params": params})
 
 
-def serve(source: BinaryIO, output: BinaryIO, diagnostics: TextIO) -> None:
+def serve(source: BinaryIO, output: BinaryIO, diagnostics: TextIO, *, health: bool = False) -> None:
     """Serve one local peer until EOF or an identified shutdown request."""
     sessions = SessionApplication()
     try:
-        _serve(source, output, diagnostics, sessions)
+        from contextlib import nullcontext
+
+        from corinthos.runtime_gate import client_runtime
+
+        with nullcontext() if health else client_runtime():
+            _serve(source, output, diagnostics, sessions, health=health)
     finally:
         sessions.supervisor.close()
 
 
-def _serve(source, output, diagnostics, sessions):
+def _serve(source, output, diagnostics, sessions, *, health=False):
     # The frozen v1 ready event precedes explicit negotiation on every connection.
     _notify(output, "system.ready", {"protocol_version": BOOTSTRAP_PROTOCOL_VERSION})
     negotiated = None
@@ -400,7 +420,7 @@ def _serve(source, output, diagnostics, sessions):
             _write(output, _error(error.code))
             continue
         try:
-            result, negotiated, stopping = _dispatch(message, negotiated, sessions)
+            result, negotiated, stopping = _dispatch(message, negotiated, sessions, health=health)
             if stopping and not sessions.supervisor.close():
                 print("Session cleanup exceeded the shutdown deadline.", file=diagnostics)
             reply = {"jsonrpc": "2.0", "id": message.get("id"), "result": result}
@@ -422,8 +442,11 @@ def _serve(source, output, diagnostics, sessions):
 
 
 def main() -> int:
+    if sys.argv[1:] not in ([], ["--installation-check"]):
+        print("Unknown sidecar mode.", file=sys.stderr)
+        return 2
     try:
-        serve(sys.stdin.buffer, sys.stdout.buffer, sys.stderr)
+        serve(sys.stdin.buffer, sys.stdout.buffer, sys.stderr, health=bool(sys.argv[1:]))
     except BrokenPipeError:
         return 0
     except OSError:

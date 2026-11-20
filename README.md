@@ -36,6 +36,12 @@ storage and desktop identity details. Support details and **Reconnect** are also
 available when the backend cannot connect. Reconnection restores the selected
 project and view through fresh read-only backend projections.
 
+Use **Settings > Corinthos updates** or `corinthos update check` to explicitly
+check for a newer signed stable release. GUI and CLI share one verified,
+recoverable updater for the per-user installation. See the
+[update, signing and recovery guide](docs/v0.1/updater.md) for staging,
+restart, status and interrupted-update recovery. Startup does not install updates.
+
 Setup builds the desktop and console launcher locally, stages the private
 CPython 3.14.10 runtime and verifies both entry points before promotion.
 Downloads are verified against the [runtime pins](platform/windows/artifacts.json)

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.corinthos.local/rpc/v2/update-result.schema.json",
+  "$defs": {
+    "operationId": { "type": "string", "pattern": "^[a-f0-9]{32}(?![\\s\\S])" }
+  },
+  "type": "object",
+  "properties": {
+    "operation_id": { "oneOf": [{ "$ref": "#/$defs/operationId" }, { "type": "null" }] },
+    "installed_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "candidate_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+    "phase": { "enum": [
+      "IDLE", "UNSUPPORTED", "CHECKING", "AVAILABLE", "NO_UPDATE", "STAGING", "READY",
+      "WAITING_FOR_EXIT", "INSTALLING", "SUCCEEDED", "ROLLED_BACK", "RECOVERY_REQUIRED", "FAILED", "BUSY"
+    ] },
+    "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "message": { "type": "string", "maxLength": 512 },
+    "error": { "oneOf": [
+      { "type": "null" },
+      {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}(?![\\s\\S])" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "required": ["code", "message"], "additionalProperties": false
+      }
+    ] },
+    "can_start": { "type": "boolean" },
+    "can_finish": { "type": "boolean" }
+  },
+  "required": [
+    "operation_id", "installed_version", "candidate_version", "phase", "progress", "message",
+    "error", "can_start", "can_finish"
+  ],
+  "additionalProperties": false
+}

@@ -510,3 +510,8 @@ class SessionSupervisor:
                 run.cancel.set()
         deadline = monotonic() + 10
         return all(run.finished.wait(max(0.0, deadline - monotonic())) for run in runs)
+
+    def has_active(self):
+        """Refuse an application restart while this supervisor owns an active run."""
+        with self._lock:
+            return bool(self._runs)

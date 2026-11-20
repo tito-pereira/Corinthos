@@ -215,6 +215,43 @@ async fn workspace_request(
 }
 
 #[tauri::command]
+async fn finish_update(
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<Value, &'static str> {
+    if window.label() != "main" || !workspace::valid_update_id(&operation_id) {
+        return Err("Supply a valid update operation identifier.");
+    }
+    let state = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut backend = state.backend.try_lock().map_err(|_| "The sidecar is busy. Retry the request.")?;
+        if backend.closing {
+            return Err("The Corinthos desktop is closing.");
+        }
+        let (sidecar, handshake) = backend.process.as_mut().ok_or("The Corinthos sidecar is disconnected.")?;
+        if !handshake.supports("update.finish") {
+            return Err("Product updates are unavailable in this backend.");
+        }
+        let result = sidecar.request("update.finish", serde_json::json!({
+            "operation_id": operation_id, "restart_gui": true,
+        }))?;
+        let exiting = result["operation_id"] == operation_id
+            && result["phase"] == "WAITING_FOR_EXIT" && result["error"].is_null();
+        if exiting {
+            backend.closing = true;
+            state.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok((result, exiting))
+    }).await.map_err(|_| "The update handoff could not complete.")??;
+    if result.1 {
+        app.exit(0);
+    }
+    Ok(result.0)
+}
+
+#[tauri::command]
 async fn select_project_directory(window: tauri::WebviewWindow) -> Result<Option<String>, &'static str> {
     use corinthos_desktop::directory_picker;
     if window.label() != "main" {
@@ -264,6 +301,7 @@ pub fn run() {
             workspace_request,
             restart_backend,
             select_project_directory,
+            finish_update,
         ])
         .build(tauri::generate_context!())
         .expect("could not build the Corinthos desktop application");

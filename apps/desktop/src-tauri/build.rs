@@ -7,6 +7,7 @@ fn main() {
             "workspace_request",
             "restart_backend",
             "select_project_directory",
+            "finish_update",
         ]),
     ))
     .expect("desktop configuration must be valid");

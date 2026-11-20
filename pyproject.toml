@@ -11,7 +11,10 @@ readme = "README.md"
 license = "MPL-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["PyYAML>=6,<7", "jsonschema>=4.23,<5"]
+dependencies = [
+  "PyYAML>=6,<7", "jsonschema>=4.23,<5", "cryptography>=50.0.2,<51",
+  "cffi>=2.1.1; python_version >= '3.15'",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]

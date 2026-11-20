@@ -21,6 +21,46 @@
       "$ref": "https://schemas.corinthos.local/rpc/v1/request.schema.json"
     },
     {
+      "if": { "properties": { "method": { "const": "update.check" } } },
+      "then": {
+        "required": ["id", "params"],
+        "properties": { "params": { "type": "object", "maxProperties": 0 } }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "update.status" } } },
+      "then": { "properties": { "params": {
+        "type": "object",
+        "properties": { "operation_id": { "$ref": "update-result.schema.json#/$defs/operationId" } },
+        "additionalProperties": false
+      } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "update.start" } } },
+      "then": {
+        "required": ["id", "params"],
+        "properties": { "params": {
+          "type": "object",
+          "properties": { "operation_id": { "$ref": "update-result.schema.json#/$defs/operationId" } },
+          "required": ["operation_id"], "additionalProperties": false
+        } }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "update.finish" } } },
+      "then": {
+        "required": ["id", "params"],
+        "properties": { "params": {
+          "type": "object",
+          "properties": {
+            "operation_id": { "$ref": "update-result.schema.json#/$defs/operationId" },
+            "restart_gui": { "type": "boolean" }
+          },
+          "required": ["operation_id"], "additionalProperties": false
+        } }
+      }
+    },
+    {
       "if": { "properties": { "method": { "const": "system.diagnostics" } } },
       "then": { "properties": { "params": {
         "type": "object", "maxProperties": 0

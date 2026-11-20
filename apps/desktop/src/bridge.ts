@@ -361,6 +361,20 @@ export interface SwitchView {
 
 let pending: Promise<unknown> = Promise.resolve();
 
+export interface ProductUpdateStatus {
+  operation_id: string | null;
+  installed_version: string;
+  candidate_version: string | null;
+  phase: "IDLE" | "UNSUPPORTED" | "CHECKING" | "AVAILABLE" | "NO_UPDATE" | "STAGING" |
+    "READY" | "WAITING_FOR_EXIT" | "INSTALLING" | "SUCCEEDED" | "ROLLED_BACK" |
+    "RECOVERY_REQUIRED" | "FAILED" | "BUSY";
+  progress: number;
+  message: string;
+  error: { code: string; message: string } | null;
+  can_start: boolean;
+  can_finish: boolean;
+}
+
 const creationMessages = {
   INVALID_INPUT: "Check the project name and absolute local directory.",
   CONFLICT: "Project creation conflicts with existing state or a different project name.",
@@ -444,6 +458,11 @@ export const bridge = {
       root, kind: review.kind, session_id: review.session_id, version: review.version, digest: review.digest,
     }),
   settingsProviders: (root?: string) => request<ProviderStatus[]>("settings.providers", root ? { root } : {}),
+  updateCheck: () => request<ProductUpdateStatus>("update.check", {}),
+  updateStart: (operation_id: string) => request<ProductUpdateStatus>("update.start", { operation_id }),
+  updateStatus: (operation_id?: string) =>
+    request<ProductUpdateStatus>("update.status", operation_id ? { operation_id } : {}),
+  updateFinish: (operationId: string) => invoke<ProductUpdateStatus>("finish_update", { operationId }),
   providersRefresh: () => request<ProviderStatus[]>("providers.refresh", {}),
   providerConfigure: (provider: string, executable: string, root?: string) =>
     request<ProviderStatus[]>("provider.configure", { provider, executable, ...(root ? { root } : {}) }),

@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     from corinthos.application.import_cli import configure as configure_import
     from corinthos.application.session_cli import configure as configure_sessions
     from corinthos.application.switch_cli import configure as configure_switch
+    from corinthos.application.update_cli import configure as configure_update
     from corinthos.bootstrap import add_cli as configure_bootstrap
     from corinthos.lifecycle.playtest_cli import add_cli as configure_playtest
     from corinthos.lifecycle.version_cli import add_cli as configure_version
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_switch(commands)
     configure_context(commands)
     configure_import(commands)
+    configure_update(commands)
     configure_workflow_parser(commands)
     configure_validation_parser(commands)
     configure_report_parser(commands)
@@ -51,10 +53,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not argv or argv == ["."]:
         from corinthos.app_shell import run_shell
+        from corinthos.runtime_gate import client_runtime
 
-        return run_shell(parser, current=Path(".") if argv else None)
+        try:
+            with client_runtime():
+                return run_shell(parser, current=Path(".") if argv else None)
+        except (OSError, RuntimeError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
     arguments = parser.parse_args(argv)
     if hasattr(arguments, "handler"):
-        return arguments.handler(arguments)
+        from corinthos.runtime_gate import client_runtime
+
+        try:
+            with client_runtime():
+                return arguments.handler(arguments)
+        except (OSError, RuntimeError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
     parser.print_help()
     return 0

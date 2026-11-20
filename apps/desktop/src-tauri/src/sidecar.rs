@@ -34,6 +34,7 @@ const CORE_METHODS: [&str; 5] = [
     "providers.status",
     "system.shutdown",
 ];
+const INSTALLATION_METHODS: [&str; 3] = ["system.handshake", "system.version", "system.shutdown"];
 type Result<T> = std::result::Result<T, &'static str>;
 pub type EventSink = Arc<dyn Fn(LifecycleEvent) + Send + Sync>;
 
@@ -81,6 +82,16 @@ impl Sidecar {
             python_command(executable, &["-m", "corinthos.application.sidecar"]),
             events,
             HANDSHAKE_TIMEOUT,
+            &CORE_METHODS,
+        )
+    }
+
+    fn start_installation_check(executable: &Path) -> Result<(Self, Handshake)> {
+        Self::launch(
+            python_command(executable, &["-m", "corinthos.application.sidecar", "--installation-check"]),
+            Arc::new(|_| {}),
+            HANDSHAKE_TIMEOUT,
+            &INSTALLATION_METHODS,
         )
     }
 
@@ -88,7 +99,7 @@ impl Sidecar {
     pub fn check_installation() -> Result<()> {
         let executable = env::current_exe().map_err(|_| INSTALLATION_UNAVAILABLE)?;
         let python = installed_python(&executable)?;
-        let (mut sidecar, handshake) = Self::start_with(&python, Arc::new(|_| {}))?;
+        let (mut sidecar, handshake) = Self::start_installation_check(&python)?;
         let expected = env!("CARGO_PKG_VERSION");
         if handshake.version != expected || sidecar.version()? != json!({"version": expected}) {
             return Err("The installed Corinthos desktop and backend versions differ.");
@@ -100,6 +111,7 @@ impl Sidecar {
         mut command: Command,
         events: EventSink,
         timeout: Duration,
+        required_methods: &[&str],
     ) -> Result<(Self, Handshake)> {
         let mut child = command
             .stdin(Stdio::piped())
@@ -179,7 +191,7 @@ impl Sidecar {
             .map_err(|_| "Invalid Corinthos sidecar handshake.")?;
         if handshake.protocol_version != PROTOCOL_VERSION
             || handshake.version.is_empty()
-            || !CORE_METHODS.iter().all(|method| handshake.supports(method))
+            || !required_methods.iter().all(|method| handshake.supports(method))
         {
             return Err("The Corinthos sidecar does not support protocol v2.");
         }

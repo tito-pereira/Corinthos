@@ -120,7 +120,7 @@ function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.schema -ne 1 -or $manifest.python.version -cne '3.14.10' -or
         $manifest.python.filename -cne 'python-3.14.10-embed-amd64.zip' -or
-        $manifest.wheels.Count -ne 6) {
+        $manifest.wheels.Count -ne 9) {
         throw 'The distribution manifest does not describe the supported private runtime and dependencies.'
     }
     $candidate = Join-Path $Work 'candidate'
@@ -130,11 +130,11 @@ function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [
     $runtime = Get-PinnedArtifact $manifest.python 'www.python.org' $Paths.Cache $Work 12 38
     [IO.Compression.ZipFile]::ExtractToDirectory($runtime, (Join-Path $candidate 'runtime'))
     Show-InstallProgress 40 'Private Python runtime verified and staged'
-    $start = 44
-    foreach ($pin in $manifest.wheels) {
-        $wheel = Get-PinnedArtifact $pin 'files.pythonhosted.org' $Paths.Cache $Work $start ($start + 4)
+    for ($index = 0; $index -lt $manifest.wheels.Count; $index++) {
+        $start = 44 + [int] [Math]::Floor(24 * $index / $manifest.wheels.Count)
+        $end = 44 + [int] [Math]::Floor(24 * ($index + 1) / $manifest.wheels.Count)
+        $wheel = Get-PinnedArtifact $manifest.wheels[$index] 'files.pythonhosted.org' $Paths.Cache $Work $start $end
         [IO.Compression.ZipFile]::ExtractToDirectory($wheel, (Join-Path $candidate 'app'))
-        $start += 4
     }
     Show-InstallProgress 68 'Pinned dependencies staged'
     Copy-ApplicationFiles (Join-Path $Source 'src\corinthos') (Join-Path $candidate 'app\corinthos')
@@ -149,7 +149,9 @@ function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [
     [IO.File]::Copy($manifestPath, (Join-Path $candidate 'resources\artifacts.json'))
     [IO.File]::Copy((Join-Path $Source 'LICENSE'), (Join-Path $candidate 'resources\LICENSE'))
     [IO.File]::Copy((Join-Path $Source 'uninstall.ps1'), (Join-Path $candidate 'uninstall.ps1'))
-    [IO.File]::Copy((Join-Path $Source 'platform\windows\common.ps1'), (Join-Path $candidate 'platform\windows\common.ps1'))
+    foreach ($name in @('common.ps1', 'distribution.ps1', 'release.ps1', 'update.ps1')) {
+        [IO.File]::Copy((Join-Path $Source "platform\windows\$name"), (Join-Path $candidate "platform\windows\$name"))
+    }
     return $candidate
 }
 
@@ -178,6 +180,8 @@ from importlib.resources import files
 from pathlib import Path
 from jsonschema import Draft202012Validator
 from rpds import HashTrieMap
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import corinthos
 import corinthos.bootstrap
 assert platform.python_version() == '3.14.10' and sys.flags.isolated and sys.flags.no_site
@@ -188,6 +192,15 @@ assert Path(corinthos.__file__).resolve().is_relative_to(app)
 assert yaml.__with_libyaml__ and HashTrieMap({'ready': True})['ready']
 assert files('corinthos.resources').joinpath('standard.schema.json').is_file()
 Draft202012Validator.check_schema({'type': 'object'})
+key = Ed25519PublicKey.from_public_bytes(bytes.fromhex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'))
+signature = bytes.fromhex('e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b')
+key.verify(signature, b'')
+try:
+    key.verify(signature, b'\0')
+except InvalidSignature:
+    pass
+else:
+    raise AssertionError('The private Ed25519 verifier accepted modified bytes.')
 print(corinthos.__version__)
 '@
     return Invoke-PrivatePython $Install @('-c', $probe)
