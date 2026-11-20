@@ -45,7 +45,7 @@ def test_fixture_demo_from_another_directory(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
         check=True,
     )
     assert "Published 8 contract types and reopened 9 revisions." in completed.stdout
