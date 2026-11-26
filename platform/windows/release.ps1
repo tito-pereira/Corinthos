@@ -61,7 +61,7 @@ function Write-CorinthosReleaseRecord([string] $Source, [string] $Candidate, $Pr
     foreach ($key in @('source_commit', 'source_tree')) {
         if ($Provenance[$key] -cnotmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { throw 'Could not verify release source identity.' }
     }
-    $notes = Join-Path $Source 'docs\v0.1\release-notes.md'
+    $notes = Join-Path $Source 'docs\release-notes.md'
     Assert-PlainPath $notes
     [IO.File]::Copy($notes, (Join-Path $resources 'RELEASE-NOTES.md'))
     $locks = Get-LockedDependencyNames $Candidate $npmLock $cargoLock
@@ -92,7 +92,7 @@ function Write-CorinthosReleaseRecord([string] $Source, [string] $Candidate, $Pr
         python_runtime = '3.14.10'
         python_package_version = '0.1.0'
         rpc_protocol = 2
-        sqlite_schema = 9
+        workspace_format = 1
         desktop_binary_sha256 = Get-ReleaseHash (Join-Path $Candidate 'bin\corinthos-desktop.exe')
         launcher_sha256 = Get-ReleaseHash (Join-Path $Candidate 'bin\corinthos.exe')
         artifact_manifest_sha256 = Get-ReleaseHash (Join-Path $resources 'artifacts.json')

@@ -7,7 +7,7 @@ from os import link
 import pytest
 
 from corinthos import user_state
-from corinthos.contracts import IntegrityError
+from corinthos.errors import IntegrityError
 
 CONFIG = {"version": 1}
 

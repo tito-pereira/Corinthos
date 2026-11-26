@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from corinthos import __version__
-from corinthos.contracts.artifacts import is_link
+from corinthos.filesystem import is_link
 
 
 def plain_path(path: Path, *, file: bool = False) -> None:

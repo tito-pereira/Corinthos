@@ -72,6 +72,9 @@ function Read-InstallManifest([string] $Directory) {
 function Get-SetupInventory([string] $Path, [switch] $ProtectProjects) {
     $target = [IO.Path]::GetFullPath($Path)
     Assert-PlainPath $target
+    if ($ProtectProjects -and [IO.File]::Exists((Join-Path $target 'context_agents\corinthos\state.json'))) {
+        throw 'A project exists inside the installation. Move it to a separate directory before setup.'
+    }
     $remaining = [Collections.Generic.Stack[IO.DirectoryInfo]]::new()
     $remaining.Push([IO.DirectoryInfo]::new($target))
     while ($remaining.Count) {
@@ -79,7 +82,8 @@ function Get-SetupInventory([string] $Path, [switch] $ProtectProjects) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
                 throw "Refusing to remove a redirected installation entry. Check $($item.FullName)."
             }
-            if ($ProtectProjects -and $item.Name -in @('.corinthos', '.nukytera', '.agentforge')) {
+            if ($ProtectProjects -and ($item.Name -in @('.corinthos', '.nukytera', '.agentforge') -or
+                ($item -is [IO.DirectoryInfo] -and [IO.File]::Exists((Join-Path $item.FullName 'context_agents\corinthos\state.json'))))) {
                 throw "A project exists inside the installation. Move the project to a separate directory before setup. Check $($item.FullName)."
             }
             $relative = $item.FullName.Substring($target.Length + 1)

@@ -1,0 +1,113 @@
+{
+  "source": "cor_prototype",
+  "snapshot": "2026-11-26",
+  "files": [
+    {
+      "path": ".agents/skills/analyze-architecture/SKILL.md",
+      "source_sha256": "0bf83af794149b38ac3c47050cf68121d96a1fcce2efd2c9ec6ffb5bc14a19af",
+      "sha256": "3ba7610315555c67d1db4ccf5190791a00dab061d8a6e4a449b2f06d5d688a12"
+    },
+    {
+      "path": ".agents/skills/auto-code/SKILL.md",
+      "source_sha256": "c2199204c5167ed17f997071b9c0864374cea6a5220a083dedb7a5e54f914cd0",
+      "sha256": "4f03020353033d4c18b9aab533d0fd133582dc999a240cc4e1da5c42402846d3"
+    },
+    {
+      "path": ".agents/skills/clean-reports/SKILL.md",
+      "source_sha256": "c5c013dec51a7e81c349eb2a3293a04da3e2407f98580451101ba4868ce05646",
+      "sha256": "ae659a54dd4a68fd933b5b40d9dba9c203748eccdb38d19f50a56e519aeb767c"
+    },
+    {
+      "path": ".agents/skills/code-updater/SKILL.md",
+      "source_sha256": "c98c95e5eff707f0f37f7787a2dfb7f521413c9986add9508292d83f4c6b2cc1",
+      "sha256": "b0a1252af9c3c0bef6f94d8d0bcc42a635f8db8c6cc70ecf5ec356f68e3f715c"
+    },
+    {
+      "path": ".agents/skills/create-feature/SKILL.md",
+      "source_sha256": "d79b38872f61e1768ff37dfe26e15db02c2e5ebb9c9f1739197ee83de3528451",
+      "sha256": "637e7ff750ea2727720e40c6cfee2154c32ef39b64d6b7f1f6d2fac464289478"
+    },
+    {
+      "path": ".agents/skills/create-groups/SKILL.md",
+      "source_sha256": "8eadb9efcb9b59a3a27d5e7794c240588d977b609b9938b7b7b2df6b64e91e77",
+      "sha256": "a525ac128b3cb315283fae190088c9e30bd77e8b832a1e35a2411dbde54c71e8"
+    },
+    {
+      "path": ".agents/skills/create-improvement/SKILL.md",
+      "source_sha256": "4742fedb337bbf16b4fb4c66f5d063efa51745418911b98ac2fbb76407f2234c",
+      "sha256": "e62d75cbfb0bfbf6185e8ebfd5eb76f5b50f60ae8b5763384f53e23187e398fa"
+    },
+    {
+      "path": ".agents/skills/create-project/SKILL.md",
+      "source_sha256": "0c8a3a3355b34e8f8c2d58f6a388f630d82d9bb378992dd452ce0f3de3a562d0",
+      "sha256": "a73586b34b1a7cd79c214657b99e64bc21c95d0219d97736cadc00784cca426b"
+    },
+    {
+      "path": ".agents/skills/create-steps-list/SKILL.md",
+      "source_sha256": "76beec8d0b9fc9cf0fa32fb963848e30ebf495b116d9c4404456c1ff196dea89",
+      "sha256": "8af9f3f3d918e977c79f97c4a0a9afbc688942d5d938df750393799b4220b32c"
+    },
+    {
+      "path": ".agents/skills/docs-updater/SKILL.md",
+      "source_sha256": "54bd331854dc0ed40555e26c54e8cd3cb2647dce8b30e7479d75fcea3ff16b47",
+      "sha256": "92bd6f2e7ae8e47188cebe5268c9b925de00e2e31a7b1be2b808d16d69a0f7b0"
+    },
+    {
+      "path": ".agents/skills/guide-feature/SKILL.md",
+      "source_sha256": "d3d71e8f9319356c1f50050f34a2f32d32b1a53b23711b338fea86fc1ff16ace",
+      "sha256": "94234c35b8738e53cd1f2c3157d69f1b6f31d132d365a93a7167f58419d575ed"
+    },
+    {
+      "path": ".agents/skills/guide-improvement/SKILL.md",
+      "source_sha256": "6e226eff5fe6fae492f17efc8076086192702aad1cf5f81888547fa95f338d8a",
+      "sha256": "29f033219b8617c2b742ed7440377e4bf28a15439c22b8e668fd39cd3756b433"
+    },
+    {
+      "path": ".agents/skills/implement-feature/SKILL.md",
+      "source_sha256": "5afb72eb278ab7c6aa7835ce12754f571da3c962e66df4ddbee1a4294a15c3d0",
+      "sha256": "b1d78ed960e69a6e8686c8b04589f035a79c582becd161fb868d1a0e02ca41ab"
+    },
+    {
+      "path": ".agents/skills/market-analysis/SKILL.md",
+      "source_sha256": "81d1c09edff758bbef237357c09dc73d6fc4a12b7ac68269f82b005952f5d0c0",
+      "sha256": "eec2a233e2523ff0bd9041b660e651930f45bf11819e0cf3e0e53fbc2b3ad912"
+    },
+    {
+      "path": ".agents/skills/merge-feature/SKILL.md",
+      "source_sha256": "263b6555d02ebdd469a147205750dbe7377c461ed4643eacb5850be401d1eee9",
+      "sha256": "5c31577b72eb7bd7719360625adc3d340540da5b28f2fd9549848596d4e84362"
+    },
+    {
+      "path": ".agents/skills/orchestrator/SKILL.md",
+      "source_sha256": "aa2208bb83016c4128ca6046ad993c795ca80fe762c2e1b51da9874638aaabd9",
+      "sha256": "b64f6b907799980c36ca3a34f809bb12891b876b58f79d197c5db291b0ca06ee"
+    },
+    {
+      "path": ".agents/skills/review-feature/SKILL.md",
+      "source_sha256": "95ce6b84e95681f513981eb4f8b3e8acceb8026ed757b8a4ac3bf8f2833a33b0",
+      "sha256": "550baeaef7c9018ccd5aba0c810637eab25236130416cb38c8a04c1feb3843f0"
+    },
+    {
+      "path": "AGENTS.md",
+      "source_sha256": "363ed8a5a6c8c1e314f255b58b3e5b374dd3fc9174014083c8cef26a307d0803",
+      "sha256": "a6be64a764ef953f9544d0a050fe0655d543fc15d7c64b5c34337be3dc004d20"
+    },
+    {
+      "path": "README.md",
+      "source_sha256": "6d72d919e531b622823c085d035fbd16cb8597173a45b26a2665452de73fee7c",
+      "sha256": "d7a6f0a3653512928cb0d67ccde481e49da6ce9f83362c52bfc4e30595eab68b"
+    },
+    {
+      "path": "task/README.md",
+      "source_sha256": "7941e175c630fbb5fd0bca41c322508949387745fed5a4aaeff619eb84bfb34e",
+      "sha256": "2e31ec57afc361025ad8069d45b7b5bf6c15cfd7c10abc7e709cff72ef8428fd"
+    }
+  ],
+  "normalization": [
+    "UTF-8 and LF",
+    "Canonical task/task_N and task_agents/task_N_agents references",
+    "Cleanup commands consolidate durable continuity before removing artifacts",
+    "Preserve runtime continuity and unrelated pending decisions",
+    "Distributed Markdown uses LF and no trailing whitespace; source bytes remain unchanged."
+  ]
+}

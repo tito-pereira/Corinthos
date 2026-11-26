@@ -16,7 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from corinthos import __version__, user_state
-from corinthos.contracts.artifacts import is_link
+from corinthos.filesystem import is_link
 from corinthos.runtime_gate import installation_root, plain_path
 from corinthos.update_manifest import (
     MAX_ARCHIVE,
@@ -89,7 +89,7 @@ _ERRORS = {
     "NOT_INSTALLED": "Use the shared per-user Windows installation to update Corinthos.",
     "SOURCE_UNAVAILABLE": "The official release source could not be reached. Check your connection and try another check.",
     "INVALID_RELEASE": "The release metadata is malformed or inconsistent. No installed files were replaced.",
-    "INCOMPATIBLE_SCHEMA": "This release uses a different project storage schema and cannot be installed by this updater.",
+    "INCOMPATIBLE_SCHEMA": "This release uses a different workspace format and cannot be installed by this updater.",
     "VERIFICATION_FAILED": "The signature or complete release payload did not verify. No unverified candidate may be installed.",
     "ACCESS_DENIED": "The updater could not access its owned staging files. Check local permissions and available disk space.",
     "BUSY": "Another client, active operation or setup owns the installation. Close it, then retry this same operation.",
@@ -359,6 +359,10 @@ def update_start(operation_id):
 
 
 def update_finish(operation_id, *, restart_gui=False):
+    from corinthos.runtime import has_active
+
+    if has_active():
+        return busy_status(operation_id)
     identity = _operation_id(operation_id)
     if type(restart_gui) is not bool:
         raise ValueError("Invalid restart choice.")

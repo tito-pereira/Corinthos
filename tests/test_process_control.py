@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from corinthos.adapters import process_control
-from corinthos.adapters.process_control import ProcessStartError, start_process
+from corinthos import process_control
+from corinthos.process_control import ProcessStartError, start_process
 
 
 def test_normal_exit_cleanup_is_confirmed_and_idempotent():

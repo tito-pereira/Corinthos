@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use std::io::Cursor;
-use std::sync::Mutex;
 
 const READY: &str = r#"{"jsonrpc":"2.0","method":"system.ready","params":{"protocol_version":1}}"#;
 const FIXTURE: &str = r#"
@@ -23,8 +22,8 @@ for line in sys.stdin:
         methods = ["system.handshake","system.version","project.status","providers.status","system.shutdown"]
         if mode != "limited":
             methods.extend(["projects.list", "future.method"])
-        if mode == "session_shutdown":
-            methods.append("session.start")
+        if mode == "worker_shutdown":
+            methods.append("skill.run")
         if mode == "missing_core":
             methods.remove("system.shutdown")
         result = {
@@ -33,7 +32,7 @@ for line in sys.stdin:
             "methods": methods,
         }
     elif method == "system.shutdown":
-        if mode == "session_shutdown":
+        if mode == "worker_shutdown":
             time.sleep(1.2)
         if mode == "ignore_shutdown":
             time.sleep(30)
@@ -216,43 +215,10 @@ fn creation_errors_forward_only_known_recovery_codes() {
     }
 }
 
-fn creation_diagnostic(directory: &Path, attempts: usize) -> io::Result<std::process::Output> {
-    let fresh = directory.with_file_name(format!(
-        "corinthos-creation-diagnostic-{}-{}", std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-    ));
-    let mut command = python_command(&fixture_python(), &["-c", r#"
-import faulthandler, json, os, stat, sys
-from pathlib import Path
-faulthandler.dump_traceback_later(15, exit=True)
-root = Path(sys.argv[1])
-root.mkdir()
-project, user = root / "new project", root / "user"
-print(json.dumps({"python": sys.executable, "version": sys.version,
-    "project": str(project), "project_resolved": str(project.resolve()),
-    "user": str(user), "user_resolved": str(user.resolve()),
-    "TEMP": os.environ.get("TEMP"), "TMP": os.environ.get("TMP")}), flush=True)
-for path in [*reversed(root.parents), root]:
-    info = path.lstat()
-    print(json.dumps({"path": str(path), "mode": info.st_mode,
-        "attributes": getattr(info, "st_file_attributes", None),
-        "reparse": bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT),
-        "device": info.st_dev, "inode": info.st_ino}), flush=True)
-from corinthos.application.workspace import project_create
-for attempt in range(int(sys.argv[2])):
-    print("creation_attempt:", attempt + 1, flush=True)
-    print(json.dumps(project_create(str(project), "Native creation project")), flush=True)
-"#]);
-    command.arg(&fresh).arg(attempts.to_string());
-    command.env("LOCALAPPDATA", fresh.join("user"));
-    command.env("XDG_STATE_HOME", fresh.join("user"));
-    command.output()
-}
-
 #[test]
-fn creation_uses_the_real_backend_and_preserves_retry_identity() {
+fn initialization_uses_the_real_backend_and_preserves_retry_identity() {
     let directory = env::temp_dir().join(format!(
-        "corinthos-creation-{}-{}", std::process::id(),
+        "corinthos-initialization-{}-{}", std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
     ));
     std::fs::create_dir(&directory).unwrap();
@@ -261,32 +227,20 @@ fn creation_uses_the_real_backend_and_preserves_retry_identity() {
     command.env("LOCALAPPDATA", directory.join("user"));
     command.env("XDG_STATE_HOME", directory.join("user"));
     let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT, &CORE_METHODS).unwrap();
-    assert!(handshake.supports("project.create"));
-    for attempt in 1..=2 {
-        let summary = child.request("project.create", json!({
-            "root": project, "display_name": "Native creation project",
-        })).unwrap_or_else(|error| {
-            match creation_diagnostic(&directory, attempt) {
-                Ok(output) => {
-                    eprintln!("Creation diagnostic exit: {}", output.status);
-                    eprintln!("{}", String::from_utf8_lossy(&output.stdout));
-                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-                }
-                Err(diagnostic_error) => eprintln!("Could not run creation diagnostic: {diagnostic_error}"),
-            }
-            panic!("Creation attempt {attempt} failed for {project:?}: {error}");
-        });
-        assert_eq!(summary["display_name"], "Native creation project");
-        assert_eq!(summary["initialized"], true);
-        assert_eq!(summary["storage"], "ABSENT");
-        assert!(summary["active_project"].is_null());
-    }
-    assert_eq!(
-        child.request("project.create", json!({"root": project, "display_name": "Conflicting name"})),
-        Err("PROJECT_CREATE_CONFLICT"),
-    );
-    assert!(!project.join(".corinthos/state.db").exists());
+    assert!(handshake.supports("project.init"));
+    let first = child.request("project.init", json!({"root": project})).unwrap();
+    assert_eq!(first["workspace_format"], 1);
+    assert!(first["project_id"].is_string());
+    let instructions = project.join("AGENTS.md");
+    std::fs::write(&instructions, "Custom instructions\n").unwrap();
+    let second = child.request("project.init", json!({"root": project})).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(std::fs::read_to_string(instructions).unwrap(), "Custom instructions\n");
+    assert!(project.join("context_agents/corinthos/state.json").is_file());
+    assert!(!project.join(".corinthos").exists());
+    assert_eq!(child.request("skill.list", json!({"root": project})).unwrap()["skills"].as_array().unwrap().len(), 17);
     assert_eq!(child.request("projects.list", json!({})).unwrap()["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(child.request("project.open", json!({"root": project})).unwrap(), first);
     child.shutdown().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -356,72 +310,10 @@ fn shutdown_terminates_and_reaps_an_unresponsive_child() {
 }
 
 #[test]
-fn session_shutdown_waits_for_backend_worker_cleanup() {
+fn worker_shutdown_waits_for_backend_worker_cleanup() {
     let (mut child, handshake) =
-        fixture("session_shutdown", HANDSHAKE_TIMEOUT, no_events()).unwrap();
-    assert!(handshake.supports("session.start"));
+        fixture("worker_shutdown", HANDSHAKE_TIMEOUT, no_events()).unwrap();
+    assert!(handshake.supports("skill.run"));
     child.shutdown().unwrap();
     assert!(child.child.try_wait().unwrap().unwrap().success());
-}
-
-#[test]
-#[ignore = "requires a private installed runtime and a prepared test project"]
-fn private_runtime_repeated_cycles() {
-    assert!(
-        env::var_os("CORINTHOS_SIDECAR_PYTHON").is_none(),
-        "exercise the actual private runtime resolution without an override"
-    );
-    let root = env::var("CORINTHOS_SIDECAR_TEST_PROJECT")
-        .expect("set CORINTHOS_SIDECAR_TEST_PROJECT to a prepared test project");
-    for cycle in 1..=10 {
-        let event_log = Arc::new(Mutex::new(Vec::new()));
-        let captured = Arc::clone(&event_log);
-        let (mut child, handshake) = Sidecar::start(Arc::new(move |event| {
-            captured.lock().unwrap().push(event.method)
-        }))
-        .unwrap();
-        assert_eq!(handshake.version, "0.1.0");
-        assert_eq!(handshake.protocol_version, 2);
-        assert!(handshake.supports("projects.list"));
-        assert!(handshake.supports("work.create"));
-        assert!(handshake.supports("session.list"));
-        assert!(handshake.supports("context.list"));
-        assert!(handshake.supports("handoff.list"));
-        assert!(
-            child
-                .request("session.list", json!({"root": &root}))
-                .unwrap()["sessions"]
-                .is_array()
-        );
-        assert!(
-            child
-                .request("context.list", json!({"root": &root}))
-                .unwrap()["projections"]
-                .is_array()
-        );
-        assert!(
-            child
-                .request("handoff.list", json!({"root": &root}))
-                .unwrap()["handoffs"]
-                .is_array()
-        );
-        assert_eq!(child.version().unwrap(), json!({"version": "0.1.0"}));
-        let project = child.project_status(&root).unwrap();
-        assert_eq!(project["exists"], true);
-        assert_eq!(project["initialized"], true);
-        assert!(child.providers_status().unwrap().is_object());
-        assert!(child.request("projects.list", json!({})).unwrap()["projects"].is_array());
-        let pid = child.child.id();
-        child.shutdown().unwrap();
-        assert!(child.child.try_wait().unwrap().unwrap().success());
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            if event_log.lock().unwrap().as_slice() == ["system.ready", "system.stopping"] {
-                break;
-            }
-            assert!(Instant::now() < deadline, "lifecycle events did not arrive");
-            thread::sleep(Duration::from_millis(5));
-        }
-        println!("private runtime cycle {cycle}: process {pid} exited and was reaped");
-    }
 }

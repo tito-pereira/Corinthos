@@ -97,80 +97,17 @@ jobs:
         run: ${{ matrix.python }} -m pip install --no-index --no-deps --force-reinstall --find-links .venv/wheelhouse corinthos-core
       - name: Check dependency consistency
         run: ${{ matrix.python }} -m pip check
-      - name: Verify installed wheel imports
+      - name: Verify installed wheel and complete blueprint
         run: |
-          ${{ matrix.python }} -c "
-          import sys
-          from pathlib import Path
-          import corinthos
-          import corinthos.adapters
-          import corinthos.workflow
-          import corinthos.validation.runtime
-          import corinthos.report.service
-          for module in (corinthos, corinthos.adapters, corinthos.workflow, corinthos.validation.runtime, corinthos.report.service):
-              origin = Path(module.__file__).resolve()
-              assert origin.is_relative_to(Path(sys.prefix).resolve()), origin
-              print(module.__name__, origin)
-          "
-      - name: Verify CLI help
-        run: ${{ matrix.python }} -m corinthos --help
-      - name: Verify console entry point
-        run: ${{ matrix.cli }} --version
-      - name: Verify Project Manager commands
+          ${{ matrix.python }} -I -c "import sys; from pathlib import Path; import corinthos, corinthos.runtime, corinthos.application.sidecar; from importlib.resources import files; assert Path(corinthos.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()); assert len(list(files('corinthos.resources').joinpath('blueprint/.agents/skills').iterdir())) == 17"
+      - name: Verify replacement CLI
         run: |
-          ${{ matrix.python }} -m corinthos project --help
-          ${{ matrix.python }} -m corinthos project start --help
-      - name: Verify Phase 2 CLI commands
-        run: |
-          ${{ matrix.python }} -m corinthos project summary --help
-          ${{ matrix.python }} -m corinthos projects list --help
-          ${{ matrix.python }} -m corinthos work create --help
-      - name: Verify Phase 4 CLI commands
-        run: |
-          ${{ matrix.python }} -m corinthos context --help
-          ${{ matrix.python }} -m corinthos handoff --help
-      - name: Verify Phase 5 CLI commands
-        run: |
-          ${{ matrix.python }} -m corinthos switch start --help
-          ${{ matrix.python }} -m corinthos switch status --help
-      - name: Verify Phase 6 CLI commands
-        run: |
-          ${{ matrix.python }} -m corinthos scope assess --help
-          ${{ matrix.python }} -m corinthos flow status --help
-          ${{ matrix.python }} -m corinthos work report --help
-      - name: Verify Phase 7 CLI commands
-        run: |
-          ${{ matrix.python }} -m corinthos import inspect --help
-          ${{ matrix.python }} -m corinthos import commit --help
-          ${{ matrix.python }} -m corinthos import status --help
-          ${{ matrix.python }} -m corinthos import refresh --help
-          ${{ matrix.python }} -m corinthos import files --help
-      - name: Verify Workflow commands
-        run: |
-          ${{ matrix.python }} -m corinthos workflow --help
-          ${{ matrix.python }} -m corinthos workflow plan --help
-          ${{ matrix.python }} -m corinthos workflow execute --help
-          ${{ matrix.python }} -m corinthos workflow recover --help
-          ${{ matrix.python }} -m corinthos workflow reconcile --help
-      - name: Verify Validation commands
-        run: |
-          ${{ matrix.python }} -m corinthos validation --help
-          ${{ matrix.python }} -m corinthos validation plan --help
-          ${{ matrix.python }} -m corinthos validation run --help
-          ${{ matrix.python }} -m corinthos validation recover --help
-      - name: Verify Report commands
-        run: |
-          ${{ matrix.python }} -m corinthos report --help
-          ${{ matrix.python }} -m corinthos report generate --help
-          ${{ matrix.python }} -m corinthos report export --help
-          ${{ matrix.python }} -m corinthos report recover --help
-          ${{ matrix.python }} -m corinthos report compare --help
-      - name: Run all tests
-        run: ${{ matrix.python }} -m pytest
-      - name: Verify installed lifecycle outside checkout
-        run: ${{ matrix.python }} -I -B examples/installed_bootstrap.py
-      - name: Run the contract kernel demonstration
-        run: ${{ matrix.python }} examples/contract_kernel.py
+          ${{ matrix.cli }} --version
+          ${{ matrix.python }} -m corinthos --help
+          ${{ matrix.python }} -m corinthos skill run --help
+          ${{ matrix.python }} -m corinthos cleanup planning --help
+      - name: Verify current workspace, workers, continuity and Update
+        run: ${{ matrix.python }} -m pytest --basetemp build/test-temp
       - name: Check lint
         run: ${{ matrix.python }} -m ruff check .
       - name: Check formatting
@@ -233,7 +170,7 @@ jobs:
           path: ${{ runner.temp }}/corinthos-release-candidate
           if-no-files-found: error
   desktop:
-    name: Verify Windows desktop Projects, Agents and Context
+    name: Verify Windows desktop foundation
     runs-on: windows-latest
     timeout-minutes: 35
     defaults:
@@ -287,8 +224,6 @@ jobs:
           $env:TMP = $testTemp
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build the WebView test observer
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release --features desktop-smoke,custom-protocol
-      - name: Verify desktop Projects, Agents and Context with the private Python runtime
+      - name: Verify retained desktop health with the private Python runtime
         shell: powershell
         run: .\apps\desktop\test-windows.ps1 -Desktop .\apps\desktop\src-tauri\target\release\corinthos-desktop.exe

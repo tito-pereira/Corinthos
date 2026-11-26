@@ -1,174 +1,74 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Per-user provider choices and advisory observations, independent of projects."""
+"""Explicit native command vectors; skills own the development process."""
 
 import os
-import re
-from dataclasses import asdict
-from importlib.resources import as_file, files
+import shutil
 from pathlib import Path
 
-from corinthos.adapters.discovery import ordinary_windows_executable
-from corinthos.adapters.providers import PROVIDERS
-from corinthos.adapters.service import AdapterManager
-from corinthos.contracts import ConflictError, IntegrityError
+from corinthos.errors import IntegrityError
 from corinthos.user_state import read_state, update_state
 
-SUPPORTED_PROVIDERS = tuple(PROVIDERS)
-_FILE = "providers.json"
-_DEFAULT = {"version": 1, "providers": {}}
-_ID = re.compile(r"[a-z][a-z0-9-]{0,31}")
-_FLAGS = {"available", "json_events", "stdin_prompt", "native_resume", "read_only"}
-_TEXTS = {"version", "reason", "executable", "discovery"}
-_OBSERVATION_LIMIT = 4096
+_DEFAULT = {"version": 1, "commands": {}}
 
 
-def _executable(value):
+def validate_command(command):
     if (
-        not isinstance(value, str)
-        or not 0 < len(value) <= _OBSERVATION_LIMIT
-        or any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in value)
+        not isinstance(command, list)
+        or not 1 <= len(command) <= 64
+        or any(not isinstance(arg, str) or len(arg) > 8192 or "\0" in arg for arg in command)
+        or not command[0]
     ):
-        raise IntegrityError("Choose an absolute native executable.")
-    path = Path(value)
-    if not path.is_absolute() or (os.name == "nt" and path.suffix.lower() != ".exe"):
-        raise IntegrityError("Choose an absolute native executable.")
-    return path
+        raise IntegrityError("Provide an executable and bounded argument vector.")
+    executable = shutil.which(command[0])
+    if not executable:
+        raise IntegrityError(
+            "Provider executable is unavailable. Configure an installed executable."
+        )
+    executable = str(Path(executable).absolute())
+    if os.name == "nt" and Path(executable).suffix.casefold() != ".exe":
+        raise IntegrityError("Use a native .exe; shell command wrappers are unsupported.")
+    return [executable, *command[1:]]
 
 
-def _registry(value):
-    entries = value.get("providers")
+def _commands():
+    value = read_state("providers.json", _DEFAULT)
+    if value.keys() - {"version", "commands", "providers"} or not isinstance(
+        value.get("commands", {}), dict
+    ):
+        raise IntegrityError("Unsupported provider registry; existing choices are preserved.")
+    return value.get("commands", {})
+
+
+def configure_provider(provider, command):
     if (
-        value.keys() != {"version", "providers"}
-        or not isinstance(entries, dict)
-        or len(entries) > 32
+        not isinstance(provider, str)
+        or not provider
+        or len(provider) > 64
+        or not all(c.isalnum() or c in "-_" for c in provider)
     ):
-        raise IntegrityError("The saved provider registry has an unsupported shape.")
-    for provider, entry in entries.items():
-        if (
-            _ID.fullmatch(provider) is None
-            or not isinstance(entry, dict)
-            or entry.keys() != {"executable", "observed"}
-        ):
-            raise IntegrityError("The saved provider registry has an invalid entry.")
-        if entry["executable"] is not None:
-            _executable(entry["executable"])
-        observed = entry["observed"]
-        if observed is not None and (
-            not isinstance(observed, dict)
-            or observed.keys() != _FLAGS | _TEXTS
-            or any(type(observed[key]) is not bool for key in _FLAGS)
-            or any(
-                observed[key] is not None
-                and not (
-                    isinstance(observed[key], str) and len(observed[key]) <= _OBSERVATION_LIMIT
-                )
-                for key in _TEXTS
-            )
-        ):
-            raise IntegrityError("The saved provider observation is invalid.")
-    return entries
+        raise IntegrityError(
+            "Use a short provider name containing letters, digits, dash or underscore."
+        )
+    command = validate_command(command)
+
+    def transform(value):
+        value.setdefault("commands", {})[provider] = command
+        if len(value["commands"]) > 32:
+            raise IntegrityError("At most 32 configured providers are supported.")
+        return value
+
+    return update_state("providers.json", _DEFAULT, transform)
 
 
-def _read():
-    return _registry(read_state(_FILE, _DEFAULT))
+def command_for(provider):
+    command = _commands().get(provider)
+    if command is None:
+        raise IntegrityError("Configure this provider's executable and arguments first.")
+    return validate_command(command)
 
 
-def _configured(entries, provider):
-    return entries.get(provider, {}).get("executable")
-
-
-def _manager(commands):
-    resources = files("corinthos.resources")
-    with (
-        as_file(resources.joinpath("standard.yaml")) as policy,
-        as_file(resources.joinpath("standard.schema.json")) as schema,
-    ):
-        return AdapterManager(policy, schema, commands=commands)
-
-
-def _observation(capabilities):
-    values = asdict(capabilities)
-    return {
-        **{key: values[key] for key in _FLAGS},
-        **{key: (values[key] or "")[:_OBSERVATION_LIMIT] or None for key in _TEXTS},
-    }
-
-
-def _row(entries, provider):
-    return {
-        "provider": provider,
-        "supported": provider in SUPPORTED_PROVIDERS,
-        "executable": _configured(entries, provider),
-        "observed": entries.get(provider, {}).get("observed"),
-    }
-
-
-def _rows(entries):
-    names = (*SUPPORTED_PROVIDERS, *sorted(entries.keys() - set(SUPPORTED_PROVIDERS)))
-    return [_row(entries, provider) for provider in names]
-
-
-def configured_executables():
-    """Read explicit supported choices only, never use cached detection as a command."""
-    return {
-        provider: entry["executable"]
-        for provider, entry in _read().items()
-        if provider in SUPPORTED_PROVIDERS and entry["executable"] is not None
-    }
-
-
-def show_providers():
-    """Inspect saved choices and last observations without native work or writes."""
-    return _rows(_read())
-
-
-def _save(entries, expected):
-    def transform(current):
-        saved = _registry(current)
-        if any(_configured(saved, name) != _configured(expected, name) for name in entries):
-            raise ConflictError("A provider choice changed during discovery. Reload and retry.")
-        result = {"version": 1, "providers": {**saved, **entries}}
-        _registry(result)
-        return result
-
-    return _registry(update_state(_FILE, _DEFAULT, transform))
-
-
-def refresh_providers():
-    """Refresh bounded native version/help observations; missing providers are normal."""
-    previous = _read()
-    commands = {
-        provider: [executable]
-        for provider in SUPPORTED_PROVIDERS
-        if (executable := _configured(previous, provider)) is not None
-    }
-    manager = _manager(commands)
-    entries = {
-        provider: {
-            "executable": _configured(previous, provider),
-            "observed": _observation(manager.discover(provider)),
-        }
-        for provider in SUPPORTED_PROVIDERS
-    }
-    return _rows(_save(entries, previous))
-
-
-def configure_provider(provider, executable=None):
-    """Set an explicit native executable after checking it, or reset to discovery."""
-    if provider not in SUPPORTED_PROVIDERS:
-        raise IntegrityError("Select a supported native provider.")
-    previous = _read()
-    observed = None
-    if executable is not None:
-        path = _executable(str(executable))
-        if not (ordinary_windows_executable(path) if os.name == "nt" else path.is_file()):
-            raise IntegrityError("Choose an existing native executable.")
-        executable = str(path)
-        capabilities = _manager({provider: [executable]}).discover(provider)
-        if not (capabilities.available and capabilities.json_events and capabilities.stdin_prompt):
-            raise IntegrityError(
-                "The native executable did not verify the required JSON/stdin interface."
-            )
-        observed = _observation(capabilities)
-    entries = _save({provider: {"executable": executable, "observed": observed}}, previous)
-    return _row(entries, provider)
+def show_providers(root=None):
+    return [
+        {"provider": name, "command": command, "available": bool(shutil.which(command[0]))}
+        for name, command in _commands().items()
+    ]

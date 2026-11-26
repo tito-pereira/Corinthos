@@ -14,8 +14,8 @@ from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from corinthos._paths import windows_component_is_reserved
-from corinthos.contracts import ContractStore
 from corinthos.runtime_gate import plain_path
+from corinthos.workspace import WORKSPACE_FORMAT
 
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_ARCHIVE = 512 * 1024 * 1024
@@ -125,17 +125,14 @@ def verify_manifest(data: bytes, signature: bytes, installed_version: str, *, ke
     if (
         not isinstance(value, dict)
         or set(value)
-        != {"schema", "product", "version", "platform", "storage_schema", "artifact", "payload"}
+        != {"schema", "product", "version", "platform", "workspace_format", "artifact", "payload"}
         or type(value["schema"]) is not int
-        or value["schema"] != 1
+        or value["schema"] != 2
         or value["product"] != "corinthos-core"
         or value["platform"] != "windows-x64"
     ):
         raise UpdateError("INVALID_RELEASE")
-    if (
-        type(value["storage_schema"]) is not int
-        or value["storage_schema"] != ContractStore.current_schema_version()
-    ):
+    if type(value["workspace_format"]) is not int or value["workspace_format"] != WORKSPACE_FORMAT:
         raise UpdateError("INCOMPATIBLE_SCHEMA")
     if version_tuple(value["version"]) <= version_tuple(installed_version):
         raise UpdateError("INVALID_RELEASE")
@@ -215,7 +212,7 @@ def verify_payload(directory: Path, manifest):
         if (
             release["product_version"] != manifest["version"]
             or release["python_package_version"] != manifest["version"]
-            or release["sqlite_schema"] != manifest["storage_schema"]
+            or release["workspace_format"] != manifest["workspace_format"]
             or release["rpc_protocol"] != 2
             or release["desktop_identifier"] != "org.corinthos.desktop"
             or release["build_platform"] != "windows"

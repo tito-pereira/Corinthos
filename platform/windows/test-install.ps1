@@ -62,57 +62,17 @@ function New-ProbeSentinel([string] $Directory) {
     $executable = Join-Path $Directory 'codex.exe'
     [IO.File]::WriteAllText($sourceFile, @'
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Reflection;
-using System.Threading;
-
-internal static class Sentinel
-{
-    public static int Main(string[] args)
-    {
-        if (args.Length == 1 && args[0] == "fixture-child")
-        {
-            Thread.Sleep(120000);
-            return 0;
-        }
-        string log = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "probe.log");
-        File.AppendAllText(log, String.Join(" ", args) + Environment.NewLine);
-        if (args.Length == 1 && args[0] == "--version")
-        {
-            Console.WriteLine("codex-cli 9.8.7");
-            return 0;
-        }
-        if (args.Length > 0 && args[args.Length - 1] == "--help")
-        {
-            Console.WriteLine("--sandbox read-only --json stdin SESSION_ID");
-            return 0;
-        }
-        if (args.Length > 0 && args[0] == "exec" && Array.IndexOf(args, "--json") >= 0)
-        {
-            string prompt = Console.In.ReadToEnd();
-            if (!prompt.Contains("Create the installed desktop fixture") ||
-                !prompt.Contains("projection_digest")) return 3;
-            using (var child = Process.Start(new ProcessStartInfo {
-                FileName = Assembly.GetExecutingAssembly().Location,
-                Arguments = "fixture-child",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            }))
-            {
-                Console.WriteLine("{\"type\":\"thread.started\",\"thread_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"}");
-                Console.WriteLine("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Fixture provider claimed VERIFIED. api_key=installed-fixture-hidden-value\"}}");
-                Console.Out.Flush();
-                Thread.Sleep(120000);
-            }
-            return 0;
-        }
-        return 2;
+internal static class Sentinel {
+    public static int Main(string[] args) {
+        File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "probe.log"),
+            String.Join(" ", args) + Environment.NewLine);
+        return 0;
     }
 }
 '@)
     & (Get-LauncherCompiler) /nologo /target:exe /platform:x64 "/out:$executable" $sourceFile | Out-Host
-    Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($executable)) 'Could not compile the synthetic provider.'
+    Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($executable)) 'Could not compile the optional-provider sentinel.'
     return $executable
 }
 
@@ -121,7 +81,7 @@ function Test-ReleaseEvidence([string] $Install, [string] $Commit, [string] $Tre
     $manifestText = [IO.File]::ReadAllText($manifestPath)
     $manifest = $manifestText | ConvertFrom-Json
     Assert-Smoke ($manifest.product_version -ceq '0.1.0' -and
-        $manifest.python_runtime -ceq '3.14.10' -and $manifest.rpc_protocol -eq 2 -and $manifest.sqlite_schema -eq 9 -and
+        $manifest.python_runtime -ceq '3.14.10' -and $manifest.rpc_protocol -eq 2 -and $manifest.workspace_format -eq 1 -and
         $manifest.source_commit -ceq $Commit -and $manifest.source_tree -ceq $Tree -and
         $manifest.signing_state -ceq 'UNSIGNED' -and $manifest.auto_updater -ceq 'EXPLICIT_SIGNED_MANIFEST' -and
         $manifest.real_provider_validation -ceq 'NOT_AVAILABLE') 'Release manifest did not identify the exact candidate and platform capabilities.'
@@ -280,24 +240,32 @@ try {
     Assert-Smoke ($LASTEXITCODE -eq 2 -and ($errorOutput -join [Environment]::NewLine) -match 'unrecognized arguments') 'The command did not forward stderr and the CLI exit code.'
 
     $projects = @('Project A & notes', 'Project B')
+    $identities = @()
     foreach ($name in $projects) {
         $root = Join-Path $other $name
         [void] [IO.Directory]::CreateDirectory($root)
-        $null = & corinthos init $root
-        Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists((Join-Path $root '.corinthos\bootstrap.json'))) 'One installed command failed to initialize an independent project.'
+        $notes = Join-Path $root 'owner-notes.txt'
+        [IO.File]::WriteAllText($notes, 'Preserve project content')
+        $initialized = (& corinthos project init --root $root) | ConvertFrom-Json
+        $marker = Join-Path $root 'context_agents\corinthos\state.json'
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($marker) -and
+            $initialized.workspace_format -eq 1) 'One installed command failed to initialize an independent prototype workspace.'
         Assert-Smoke (![IO.Directory]::Exists((Join-Path $root '.venv'))) 'Project initialization created a private project venv.'
-        Set-Location -LiteralPath $root
-        $terminalCommand = @('0', '0') | & corinthos .
-        Assert-Smoke ($LASTEXITCODE -eq 0 -and 'PROJECT' -in $terminalCommand -and
-            'CORINTHOS' -in $terminalCommand) 'Installed command did not pass terminal input/output or open an existing project.'
+        $identities += $initialized.project_id
+        $markerHash = (Get-FileHash -LiteralPath $marker).Hash
+        $opened = (& corinthos project open --root $root) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and $opened.project_id -ceq $initialized.project_id -and
+            (Get-FileHash -LiteralPath $marker).Hash -eq $markerHash -and
+            [IO.File]::ReadAllText($notes) -ceq 'Preserve project content') 'Opening a compatible workspace changed project identity or existing files.'
+        $skills = (& corinthos skill list --root $root) | ConvertFrom-Json
+        Assert-Smoke ($LASTEXITCODE -eq 0 -and @($skills.skills).Count -eq 17) 'The installed blueprint did not provide all 17 local skills.'
     }
+    Assert-Smoke ($identities[0] -cne $identities[1]) 'Independent workspaces share an identity.'
     Set-Location -LiteralPath $other
     $recent = Join-Path $paths.State 'recent-projects.json'
-    Assert-Smoke ((Get-Content -LiteralPath $recent -Raw | ConvertFrom-Json).projects.Count -eq 2) 'Installed Home did not record both projects.'
-    $uiProvider = New-ProbeSentinel (Join-Path $sandbox 'GUI configured provider')
-    $uiProviderLog = Join-Path ([IO.Path]::GetDirectoryName($uiProvider)) 'probe.log'
-    $startupMilliseconds = Invoke-InstalledDesktopSmoke $desktop $privatePython (Join-Path $other $projects[0]) $uiProvider $uiProviderLog
-    Assert-Smoke (![IO.File]::Exists($autoLog)) 'Installed desktop executed the provider on PATH.'
+    Assert-Smoke ((Get-Content -LiteralPath $recent -Raw | ConvertFrom-Json).projects.Count -eq 2) 'The installed runtime did not record both workspaces.'
+    $startupMilliseconds = Invoke-InstalledDesktopSmoke $desktop $privatePython (Join-Path $other $projects[0])
+    Assert-Smoke (![IO.File]::Exists($autoLog)) 'Installed health checks executed an optional provider.'
     Save-ReleaseCandidate $paths $runnerTemp $releaseFiles
     $config = Join-Path $paths.State 'config.json'
     $configHash = (Get-FileHash -LiteralPath $config).Hash
@@ -320,7 +288,7 @@ try {
     [IO.File]::Copy($autoExecutable, $configuredExecutable)
     $registryFixture = @{
         version = 1
-        providers = @{ codex = @{ executable = $configuredExecutable; observed = $null } }
+        commands = @{ codex = @($configuredExecutable) }
     } | ConvertTo-Json -Depth 4
     [IO.File]::WriteAllText($registry, $registryFixture)
     $registryHash = (Get-FileHash -LiteralPath $registry).Hash
@@ -366,21 +334,14 @@ try {
         [IO.Directory]::Move($temporaryRuntime, $runtime)
     }
 
-    $null = & corinthos adapters refresh
-    Assert-Smoke ($LASTEXITCODE -eq 0 -and [IO.File]::Exists($configuredLog)) 'Explicit refresh did not probe the configured provider.'
-    $actualProbes = [IO.File]::ReadAllLines($configuredLog) -join '|'
-    Assert-Smoke ($actualProbes -ceq '--version|--help|exec --help|exec resume --help') 'Explicit refresh did not perform the bounded native probes.'
-    Assert-Smoke (![IO.File]::Exists($autoLog)) 'Explicit refresh ignored the configured provider in favor of PATH.'
-    $codex = (Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json).providers.codex
-    Assert-Smoke (
-        $codex.executable -ceq $configuredExecutable -and $codex.observed.executable -ceq $configuredExecutable -and
-        $codex.observed.discovery -ceq 'explicit' -and $codex.observed.version -ceq '9.8.7' -and
-        $codex.observed.available -and $codex.observed.json_events -and $codex.observed.stdin_prompt -and
-        $codex.observed.native_resume -and $codex.observed.read_only
-    ) 'Explicit refresh did not record the observed native provider capabilities.'
-    Write-Host 'Fresh install and configured reinstall executed no provider. Explicit refresh verified the configured synthetic provider.'
+    $providerStatus = (& corinthos provider list) | ConvertFrom-Json
+    Assert-Smoke ($LASTEXITCODE -eq 0 -and @($providerStatus.providers).Count -eq 1 -and
+        $providerStatus.providers[0].provider -ceq 'codex' -and
+        $providerStatus.providers[0].command[0] -ceq $configuredExecutable -and
+        $providerStatus.providers[0].available) 'Passive provider status did not retain the configured command.'
+    Assert-Smoke (![IO.File]::Exists($configuredLog) -and ![IO.File]::Exists($autoLog)) 'Passive provider status executed an optional command.'
 
-    $projectDatabase = Join-Path (Join-Path $other $projects[0]) '.corinthos\state.db'
+    $projectDatabase = Join-Path (Join-Path $other $projects[0]) 'context_agents\corinthos\state.json'
     $beforeUninstallProject = (Get-FileHash -LiteralPath $projectDatabase).Hash
     $beforeUninstallProviders = (Get-FileHash -LiteralPath $registry).Hash
     $releaseFiles = @(Test-ReleaseEvidence $paths.Install $commit $tree $movedSource)
@@ -392,9 +353,9 @@ try {
     Assert-UninstallRefused $uninstaller 'entries outside their Corinthos inventory'
     Assert-Smoke ([IO.File]::ReadAllText($unrelatedFile) -ceq 'preserve') 'Uninstall changed an unrelated file.'
     [IO.File]::Delete($unrelatedFile)
-    $embeddedProject = Join-Path $paths.Install 'project\.corinthos'
+    $embeddedProject = Join-Path $paths.Install 'project\context_agents\corinthos'
     [void] [IO.Directory]::CreateDirectory($embeddedProject)
-    $projectFile = Join-Path $embeddedProject 'state.db'
+    $projectFile = Join-Path $embeddedProject 'state.json'
     [IO.File]::WriteAllText($projectFile, 'project state')
     $null = Invoke-TestInstall $installer 'project exists inside the installation'
     Assert-UninstallRefused $uninstaller 'project exists inside the installation'
@@ -406,9 +367,9 @@ try {
     Assert-Smoke (![IO.Directory]::Exists($paths.Install)) 'Uninstall left the installed application.'
     Assert-Smoke ((Get-UserPath $key).Text -ceq $pathFixture) 'Uninstall changed unrelated PATH entries.'
     foreach ($name in $projects) {
-        Assert-Smoke ([IO.File]::Exists((Join-Path (Join-Path $other $name) '.corinthos\bootstrap.json'))) 'Uninstall removed project state.'
+        Assert-Smoke ([IO.File]::Exists((Join-Path (Join-Path $other $name) 'context_agents\corinthos\state.json'))) 'Uninstall removed project state.'
     }
-    Assert-Smoke ((Get-FileHash -LiteralPath $projectDatabase).Hash -eq $beforeUninstallProject) 'Uninstall modified the exact GUI Session and Work Item state.'
+    Assert-Smoke ((Get-FileHash -LiteralPath $projectDatabase).Hash -eq $beforeUninstallProject) 'Uninstall modified the exact workspace identity state.'
     Assert-Smoke ((Get-FileHash -LiteralPath $config).Hash -ceq $configHash -and
         (Get-FileHash -LiteralPath $recent).Hash -ceq $recentHash -and
         (Get-FileHash -LiteralPath $registry).Hash -ceq $beforeUninstallProviders) 'Uninstall removed or changed global user state.'
@@ -419,7 +380,8 @@ try {
             source_tree = $tree
             platform = 'windows-x64'
             installed_product = 'PASS'
-            shipping_binary_smoke = 'PASS'
+            shipping_binary_health = 'PASS'
+            engine_gui_views = 'DEFERRED'
             preconfigured_reinstall = 'PASS'
             state_preserving_uninstall = 'PASS'
             signing_state = 'UNSIGNED'
@@ -430,7 +392,7 @@ try {
                 toolchain_cache_bytes = [long] $toolchainCacheBytes
                 cold_source_install_ms = $firstBuild.ElapsedMilliseconds
                 warm_reinstall_ms = $warmBuild.ElapsedMilliseconds
-                desktop_start_to_private_handshake_ms = [long] $startupMilliseconds
+                desktop_health_handshake_ms = [long] $startupMilliseconds
             }
         })
     }

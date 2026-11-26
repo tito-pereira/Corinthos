@@ -1,75 +1,89 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Corinthos command-line entry point."""
+"""Terminal adapter for project-local skills and shared installation updates."""
 
 import argparse
+import json
+import subprocess
 import sys
-from pathlib import Path
 
 from corinthos import __version__
+from corinthos.application.service import invoke
+from corinthos.errors import CorinthosError
+from corinthos.runtime_gate import client_runtime
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="corinthos",
-        description="Corinthos Core - contracts and human-led project negotiation.",
-        epilog="Run corinthos for Home or corinthos . to open the current project.",
+        prog="corinthos", description="Local project workspaces and skills."
     )
     parser.add_argument("--version", action="version", version=f"corinthos {__version__}")
-    from corinthos.application.adaptive_cli import configure as configure_adaptive
-    from corinthos.application.cli import configure as configure_status
-    from corinthos.application.cli import configure_workspace
-    from corinthos.application.context_cli import configure as configure_context
-    from corinthos.application.import_cli import configure as configure_import
-    from corinthos.application.session_cli import configure as configure_sessions
-    from corinthos.application.switch_cli import configure as configure_switch
-    from corinthos.application.update_cli import configure as configure_update
-    from corinthos.bootstrap import add_cli as configure_bootstrap
-    from corinthos.lifecycle.playtest_cli import add_cli as configure_playtest
-    from corinthos.lifecycle.version_cli import add_cli as configure_version
-    from corinthos.project_manager.cli import configure_parser
-    from corinthos.report.cli import configure_parser as configure_report_parser
-    from corinthos.validation.cli import configure_parser as configure_validation_parser
-    from corinthos.workflow.build_cli import add_cli as configure_build
-    from corinthos.workflow.cli import configure_parser as configure_workflow_parser
-
-    commands = configure_parser(parser)
-    configure_workspace(commands)
-    configure_adaptive(commands)
-    configure_sessions(commands)
-    configure_switch(commands)
-    configure_context(commands)
-    configure_import(commands)
-    configure_update(commands)
-    configure_workflow_parser(commands)
-    configure_validation_parser(commands)
-    configure_report_parser(commands)
-    configure_bootstrap(commands)
-    configure_build(commands)
-    configure_playtest(commands)
-    configure_version(commands)
-    configure_status(
-        commands.add_parser("status", help="Inspect known state without making changes.")
-    )
-    if not argv or argv == ["."]:
-        from corinthos.app_shell import run_shell
-        from corinthos.runtime_gate import client_runtime
-
-        try:
-            with client_runtime():
-                return run_shell(parser, current=Path(".") if argv else None)
-        except (OSError, RuntimeError) as error:
-            print(str(error), file=sys.stderr)
-            return 1
-    arguments = parser.parse_args(argv)
-    if hasattr(arguments, "handler"):
-        from corinthos.runtime_gate import client_runtime
-
-        try:
-            with client_runtime():
-                return arguments.handler(arguments)
-        except (OSError, RuntimeError) as error:
-            print(str(error), file=sys.stderr)
-            return 1
-    parser.print_help()
+    families = parser.add_subparsers(dest="family")
+    for family, actions in (
+        ("project", ("init", "open", "status", "list")),
+        ("skill", ("list", "show", "run")),
+        ("run", ("get", "list", "cancel", "integrate", "discard")),
+        ("continuity", ("show", "save")),
+        ("cleanup", ("reports", "group", "planning")),
+        ("provider", ("list", "configure")),
+        ("update", ("check", "start", "status", "finish")),
+    ):
+        parent = families.add_parser(family)
+        commands = parent.add_subparsers(dest="action", required=True)
+        for action in actions:
+            command = commands.add_parser(action)
+            method = f"{family}.{action}"
+            if family == "project" and action == "list":
+                method = "projects.list"
+            if family == "provider" and action == "list":
+                method = "providers.status"
+            command.set_defaults(method=method)
+            if family in {"project", "skill", "run", "continuity", "cleanup"} and not (
+                family == "project" and action == "list"
+            ):
+                command.add_argument(
+                    "--root", required=True, help="Explicit project workspace root."
+                )
+            if family == "skill" and action in {"show", "run"}:
+                command.add_argument("skill" if action == "run" else "name")
+            if family == "skill" and action == "run":
+                command.add_argument("--provider", required=True)
+                command.add_argument("--group", type=int)
+                command.add_argument("--instruction", default="")
+                command.add_argument("--claim", action="append", dest="claims", default=[])
+                command.add_argument("--timeout", type=float, default=3600)
+            if family == "run" and action != "list":
+                command.add_argument("run_id")
+            if (family == "run" and action == "discard") or family == "cleanup":
+                command.add_argument("--summary", required=True)
+            if family == "continuity" and action == "save":
+                for field in ("completed", "pending", "blockers", "verification", "resume"):
+                    command.add_argument("--" + field, default=argparse.SUPPRESS)
+            if family == "cleanup":
+                command.set_defaults(method="cleanup", kind=action)
+                if action in {"reports", "group"}:
+                    command.add_argument("--group", type=int, required=True)
+                else:
+                    command.add_argument("--resolved-decisions", action="store_true")
+            if family == "provider" and action == "configure":
+                command.add_argument("provider")
+                command.add_argument("--command-json", required=True)
+            if family == "update" and action in {"start", "status", "finish"}:
+                command.add_argument("--operation-id", required=action != "status")
+            if family == "update" and action == "finish":
+                command.add_argument("--restart-gui", action="store_true")
+    args = vars(parser.parse_args(argv))
+    method = args.pop("method", None)
+    args.pop("family", None)
+    args.pop("action", None)
+    if method is None:
+        parser.print_help()
+        return 0
+    try:
+        if "command_json" in args:
+            args["command"] = json.loads(args.pop("command_json"))
+        with client_runtime():
+            print(json.dumps(invoke(method, args), ensure_ascii=True, indent=2))
+    except (CorinthosError, ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
     return 0

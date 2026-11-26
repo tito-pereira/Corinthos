@@ -10,8 +10,8 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from corinthos.contracts import IntegrityError
-from corinthos.contracts.artifacts import is_link
+from corinthos.errors import IntegrityError
+from corinthos.filesystem import is_link
 
 _FILES = {"config.json", "providers.json", "recent-projects.json", "updates.json"}
 _MAX_BYTES = 128 * 1024

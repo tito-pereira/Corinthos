@@ -25,7 +25,7 @@ const SWITCH_EXECUTE_TIMEOUT: Duration = Duration::from_secs(20);
 const IMPORT_INSPECT_TIMEOUT: Duration = Duration::from_secs(45);
 const IMPORT_WRITE_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
-const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
+const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PROTOCOL_VERSION: u32 = 2;
 const CORE_METHODS: [&str; 5] = [
     "system.handshake",
@@ -199,8 +199,8 @@ impl Sidecar {
             method: "system.ready",
             params: json!({"protocol_version": PROTOCOL_VERSION}),
         });
-        if handshake.supports("session.start") {
-            client.shutdown_timeout = SESSION_SHUTDOWN_TIMEOUT;
+        if handshake.supports("skill.run") {
+            client.shutdown_timeout = WORKER_SHUTDOWN_TIMEOUT;
         }
         Ok((client, handshake))
     }

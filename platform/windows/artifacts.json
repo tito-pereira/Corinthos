@@ -9,42 +9,6 @@
   },
   "wheels": [
     {
-      "filename": "attrs-26.1.0-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
-      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
-      "bytes": 67548
-    },
-    {
-      "filename": "jsonschema-4.26.0-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl",
-      "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
-      "bytes": 90630
-    },
-    {
-      "filename": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl",
-      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
-      "bytes": 18437
-    },
-    {
-      "filename": "pyyaml-6.0.3-cp314-cp314-win_amd64.whl",
-      "url": "https://files.pythonhosted.org/packages/23/20/bb6982b26a40bb43951265ba29d4c246ef0ff59c9fdcdf0ed04e0687de4d/pyyaml-6.0.3-cp314-cp314-win_amd64.whl",
-      "sha256": "4a2e8cebe2ff6ab7d1050ecd59c25d4c8bd7e6f400f5f82b96557ac0abafd0ac",
-      "bytes": 156429
-    },
-    {
-      "filename": "referencing-0.37.0-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl",
-      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
-      "bytes": 26766
-    },
-    {
-      "filename": "rpds_py-2026.9.1-cp314-cp314-win_amd64.whl",
-      "url": "https://files.pythonhosted.org/packages/a4/0b/489d48abbcc7d70cf3fbf662d9d22abf1f4650761c0a9ae05260800800d3/rpds_py-2026.9.1-cp314-cp314-win_amd64.whl",
-      "sha256": "837c6b305e26fe0f75b15c92cf3b2ba29e0ae19dc40b1c557b026cb426347d0c",
-      "bytes": 222852
-    },
-    {
       "filename": "cryptography-50.0.2-cp311-abi3-win_amd64.whl",
       "url": "https://files.pythonhosted.org/packages/9a/4f/adfc442765721292fff86d314ce385d3249d22db42295c0dd057727b60f3/cryptography-50.0.2-cp311-abi3-win_amd64.whl",
       "sha256": "7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c",

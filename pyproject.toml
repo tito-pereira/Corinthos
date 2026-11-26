@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "corinthos-core"
 dynamic = ["version"]
-description = "Local Corinthos Core foundation, guided by contracts and evidence."
+description = "Local project workspaces, skills and isolated provider processes."
 readme = "README.md"
 license = "MPL-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-  "PyYAML>=6,<7", "jsonschema>=4.23,<5", "cryptography>=50.0.2,<51",
+  "cryptography>=50.0.2,<51",
   "cffi>=2.1.1; python_version >= '3.15'",
 ]
 
@@ -26,8 +26,7 @@ corinthos = "corinthos.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"corinthos.contracts" = ["schemas/*.json"]
-"corinthos.resources" = ["*.yaml", "*.json"]
+"corinthos.resources" = ["*.json", "blueprint/*.md", "blueprint/*.json", "blueprint/task/*.md", "blueprint/.agents/skills/*/SKILL.md"]
 
 [tool.setuptools.dynamic]
 version = {attr = "corinthos.__version__"}

@@ -1,523 +1,67 @@
-# Corinthos Core
+# Corinthos
 
-Corinthos is a local framework for directing programming agents through clear
-instructions, explicit human decisions, versioned contracts, and independent
-verification. It aims to preserve engineering standards when working with
-different agents, initially Codex and Claude Code.
+Corinthos is a local Python application for project workspaces and project-local development skills. One installation serves multiple independent projects. Skills define planning, implementation, independent review, correction and orchestration; the backend supplies processes, isolation, persistence and installed-app Update.
 
-## Install on Windows
+This development snapshot replaces the former Engines, project contracts and approval/publication machinery. Legacy `.corinthos` and `.nukytera` project state is preserved and explicitly refused for execution. Use a separate prototype workspace; no automatic migration is supplied.
 
-In 64-bit PowerShell 5.1 or later on Windows x64, clone the repository with
-Git for Windows and run the installer from a clean checkout.
+## Start from source
 
-```powershell
-git clone https://github.com/tito-pereira/Corinthos.git
-cd Corinthos
-.\install.ps1
-```
-
-After the installer reports 100%, open a new terminal in any directory.
-
-```powershell
-corinthos
-```
-
-The desktop Home lets you create or open a project, resume a recent project,
-and inspect providers and settings. Use `corinthos .` for the terminal
-project entry point. Scriptable commands such as `corinthos init .` and `corinthos project
---root . start` also work. Providers are optional. Installation and reinstall
-leave provider settings and observations untouched and run no provider CLIs.
-Choose **Settings > Providers > Refresh** or run `corinthos adapters refresh` to
-request capability checks explicitly.
-
-The compact connection control shows startup, connection and restart progress.
-Use **Settings > About / Diagnostics** for application, protocol, private runtime,
-storage and desktop identity details. Support details and **Reconnect** are also
-available when the backend cannot connect. Reconnection restores the selected
-project and view through fresh read-only backend projections.
-
-Use **Settings > Corinthos updates** or `corinthos update check` to explicitly
-check for a newer signed stable release. GUI and CLI share one verified,
-recoverable updater for the per-user installation. See the
-[update, signing and recovery guide](docs/v0.1/updater.md) for staging,
-restart, status and interrupted-update recovery. Startup does not install updates.
-
-Setup builds the desktop and console launcher locally, stages the private
-CPython 3.14.10 runtime and verifies both entry points before promotion.
-Downloads are verified against the [runtime pins](platform/windows/artifacts.json)
-and [build tool pins](platform/windows/toolchain-artifacts.json). Uncached
-downloads require network access. If needed, setup verifies and runs official
-Microsoft installers for the Visual C++ x64 tools, Windows SDK and WebView2.
-Microsoft build tools may prompt for UAC. Corinthos installs for the current
-account and runs independently of a system Python or the checkout location.
-
-| Location | Contents |
-| --- | --- |
-| `%LOCALAPPDATA%\Programs\Corinthos` | Desktop and CLI in `bin`, private runtime, resources, release manifest and checksums. |
-| `%LOCALAPPDATA%\Corinthos` | Versioned settings, provider registry and up to 20 recent project references, plus logs and cached downloads. |
-| `<project>\.corinthos` | Authoritative state for that project. |
-
-**Reinstall or upgrade locally.** Run `.\install.ps1` from the desired source
-checkout. It stages and verifies a replacement while preserving compatible
-user configuration, recent projects and project data. If setup finds files
-outside its installation inventory, move them to a separate location before
-retrying. If a cached download fails verification, remove the named cached file
-and rerun the installer.
-
-**Uninstall.** Run the installed uninstaller in PowerShell.
-
-```powershell
-& "$env:LOCALAPPDATA\Programs\Corinthos\uninstall.ps1"
-```
-
-Uninstall removes the installed application and its user PATH entry. User
-configuration, cached downloads and project state are kept. Open a new terminal
-after uninstall to pick up the PATH change.
-
-Windows is the supported platform for this source installer. The contributor
-workflow below remains available on Windows and Ubuntu.
-See the [release notes](docs/v0.1/release-notes.md) and
-[release verification guide](docs/v0.1/release-hardening.md) for build details,
-provenance and signing status.
-
-## About Corinthos
-
-The implementation includes the **Phase 0 foundation**, **Phase 1 Contract
-Kernel**, **Phase 2 Project Manager**, **Phase 3 Workflow + Adapters**,
-**Phase 4 Validation Engine**, **Phase 5 Report Engine** and the **Phase 6 lifecycle
-implementation**, with package version `0.1.0`. The [Phase 6 verification record](docs/phase-6-verification.md)
-separates observed behavior, remaining proof and the Phase 6.1 delivery exception.
-Phase 0 established English-language public
-development, clean Windows and Linux environments and MPL 2.0.
-The product target remains Core v0.1, based on product specification revision v0.2.
-
-The brand is **Corinthos**, the Python distribution is `corinthos-core`, and
-the sole supported import prefix and CLI command are `corinthos`. Phase 1.1
-changes these identifiers at version `0.1.0`. Update imports and command
-invocations in integrations that use the earlier names. The
-Contract Kernel keeps its behavior and durable wire identities.
-Earlier names and execution evidence are recorded in [decisions](docs/decisions.md).
-
-## Current capabilities
-
-- An installable Python package and CLI with `--help` and `--version`.
-- A declarative YAML Standard containing five mandatory Engineering Commandments.
-- JSON Schema validation that rejects missing or disabled Commandments and invalid
-  policy structure, using safe YAML loading.
-- Eight packaged contract schemas, exact references, publication authority checks,
-  immutable revisions, and transactional local SQLite storage.
-- Positive and negative tests, Ruff checks, and a GitHub Actions workflow.
-- Agent instructions and self-contained engineering documentation.
-- Guided, AI-assisted and advanced project authoring over a persistent draft,
-  with structural readiness checks, complete reviews and local terminal approval.
-- Bounded intake of published Project Revision Requests and immutable approved
-  Project revisions through the existing Kernel.
-- Guided technology and module planning, exact provider/consumer interfaces,
-  verification specifications, checkpoints and optional milestone plans.
-- Complete TDC/Module/Workflow review and publication with per-document human
-  receipts and bounded dependency-only delegation.
-- Sequential checkpoint attempts, actual command/artifact checks, explicit
-  preliminary technical review, fenced workspace leases and inspected recovery.
-- Conservative revision reconciliation and bounded structural requests routed
-  through the real Kernel and Project Manager.
-- Independent scoped Validation planning, exact reviewed procedures, durable
-  evidence-backed runs and formal gate consumption.
-- Consistent source snapshots, immutable nine-section reports, revision history,
-  comparisons and private canonical JSON/Markdown export through an installed CLI.
-
-The six Engines use the same kernel. Project Manager provides human-led structured
-negotiation. Adapter Manager has separate Codex and Claude provider boundaries.
-Workflow supports engineering planning, sequential execution and inspected
-recovery. Validation derives independent plans and publishes scoped results
-for Workflow to consume. Report consolidates exact source facts and history.
-Phase 6 adds [delivered versions and Interactive Project Evolution](docs/evolution.md),
-with isolated cumulative builds, independent admission, session-safe promotion,
-source-bound feedback and optional exact product review. The owner's Phase 6.1
-delivery exception waives the remaining pilot end-to-end and comparable live
-Claude Code proof as delivery gates; their outcomes remain incomplete/unverified.
-Full Core/PRD completion is not claimed. See the [delivery decision and remaining
-proof](docs/phase-6-verification.md#phase-61-delivery-decision).
-Natural-language consistency and technical feasibility require human review.
-
-## Five Engineering Commandments
-
-1. **M1 — Precise instructions.** Define bounded responsibilities, deliverables,
-   interfaces, and verifiable acceptance criteria.
-2. **M2 — Justified technologies.** Explain technology choices and preserve human
-   authority over binding decisions.
-3. **M3 — Meaningful testing.** Verify behavior, failure cases, integration,
-   regressions, and security in proportion to the change.
-4. **M4 — Usable documentation.** Keep setup, interfaces, decisions, and limitations
-   accurate and reproducible.
-5. **M5 — Readable, maintainable code.** Prefer clear names, modularity, simplicity,
-   and appropriate efficiency.
-
-All five are mandatory. The initial policy rejects their removal or deactivation.
-Repository artifacts and public collaboration use English.
-
-## Contributor setup
-
-Package metadata declares Python `>=3.12`. CI tests CPython 3.12, 3.14.10 and 3.15
-on Windows and Ubuntu. These commands use a contributor-managed CPython 3.12
-installation with pip and venv, plus Git.
-Run them from the root of a fresh checkout. Environment activation is optional
-because each command names its interpreter.
-
-### Windows PowerShell
-
-```powershell
-py -3.12 --version
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -c "from pathlib import Path; import sys; print(sys.executable); assert sys.prefix != sys.base_prefix; assert Path(sys.prefix).resolve() == Path('.venv').resolve(); assert Path(sys.executable).absolute().is_relative_to(Path('.venv').resolve())"
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m corinthos --help
-.\.venv\Scripts\corinthos.exe --version
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format --check .
-```
-
-If the `py` launcher is unavailable, use a normal Python 3.12 executable to create
-the environment, after checking its version. For example, if that installation is
-available as `python`, the equivalent command is `python -m venv .venv`.
-
-Optional PowerShell activation can be checked separately.
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -c "from pathlib import Path; import sys; print(sys.executable); assert Path(sys.prefix).resolve() == Path('.venv').resolve()"
-deactivate
-```
-
-If the current PowerShell execution policy blocks activation, keep using the
-explicit `.venv` executable paths above. Installation and verification do not
-require changing the machine's execution policy.
-
-### POSIX shell
-
-```sh
-python3.12 --version
-python3.12 -m venv .venv
-.venv/bin/python -c "from pathlib import Path; import sys; print(sys.executable); assert sys.prefix != sys.base_prefix; assert Path(sys.prefix).resolve() == Path('.venv').resolve(); assert Path(sys.executable).absolute().is_relative_to(Path('.venv').resolve())"
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pip check
-.venv/bin/python -m corinthos --help
-.venv/bin/corinthos --version
-.venv/bin/python -m pytest
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
-```
-
-Optional activation in Bash.
-
-```bash
-source .venv/bin/activate
-python -c "from pathlib import Path; import sys; print(sys.executable); assert Path(sys.prefix).resolve() == Path('.venv').resolve()"
-deactivate
-```
-
-In POSIX `sh`, use `. .venv/bin/activate` instead of `source`. If a distribution
-packages venv or ensurepip separately, install its Python 3.12 venv support before
-creating the environment. Keep installation inside `.venv`.
-
-The [current Python baseline](docs/decisions.md#current-python-baseline) records
-the distinction between declared compatibility and verified environments. The
-workflow targets CPython 3.12, 3.14.10 and 3.15 on Linux and Windows. Clean-venv verification must
-identify the exact commit and environment used. Prior CI results from the runner's
-global Python do not establish the clean-venv result.
-
-## Discover or configure an agent
-
-Initialize an authorized project directory and inspect its providers:
+Python 3.12 or newer is required. From the repository:
 
 ```text
-corinthos init .
-corinthos adapters show --root .
-corinthos adapters capabilities --root . --provider codex
+python -m venv .venv
+python -m pip install -e ".[dev]"
+python -m corinthos --help
 ```
 
-Initialization also works without an available provider. On Windows, discovery
-can resolve the native executable in the official `@openai/codex` npm layout
-behind a PATH shim, without executing `.cmd`, `.bat` or `.ps1` wrappers. A failed
-lookup does not prove Codex is not installed. Capabilities report the selected
-executable and discovery source; multiple candidates require an explicit choice.
-Use `adapters configure` to save a native path after initialization, or `reset`
-to return to automatic discovery. See the [provider configuration and
-troubleshooting guide](docs/adapters.md#provider-configuration-after-initialization)
-for commands, precedence and verification limits.
-
-## Create your first project specification
-
-On desktop Home, choose **Create new project**, enter a display name and use
-**Select folder** to choose its directory, then choose **Create project**.
-Open and repository import use the same native Windows folder picker. The chosen
-path stays visible; **Enter path manually** is the advanced fallback. Selection
-alone does not initialize, open or import anything. Existing
-ordinary files and root instruction files are preserved. The project opens after
-private initialization and registration. Names appear in Home, Projects and
-Command, including after restarting the application.
-
-Choose **Continue with Project Manager** for the supported terminal authoring
-command. GUI draft authoring is currently unavailable. To initialize from the
-terminal and start authoring directly, use:
-
-```powershell
-corinthos init .
-corinthos project --root . start
-```
-
-If registration is incomplete or a connection drops during creation, reconnect
-and explicitly retry the same name and directory. A different name conflicts
-with the saved creation intent. The desktop keeps recoverable form values and
-never automatically repeats a creation request. See the
-[creation and recovery boundary](docs/v0.1/phase-2-projects.md#named-private-project-creation).
-
-You can select another existing project directory with `--root`. Corinthos
-saves accepted answers privately beneath that directory.
-
-Describe your idea in your own words, for example, "Build a local greeting for
-a supplied name." Choose how to continue editing the same saved draft.
-
-- **Help me develop the idea** requests optional advice from a provider you
-  select. You decide which suggestions to accept, edit or reject.
-- **Guide me through the specification** walks you through included scope, each
-  requirement and its observable acceptance criteria, optional constraints and
-  project success criteria. It works without a provider.
-- **Configure it manually** opens the full editor, including exclusions,
-  assumptions, risks, proposals, questions and feasibility records.
-
-**Project Completion** shows structural progress. At 100% the draft meets the
-structural prerequisites for complete review. Feasibility, product quality and
-independent Validation are assessed separately. Use **Review current draft** to
-inspect the specification and any outstanding issues.
-
-Use **Back** (`0` in menus) to leave the current step, or **Save and exit** (`S`
-in menus) to leave the session. At text prompts use `/back` or `/save`. Accepted
-changes persist even when the draft is incomplete. Resume it from Home or run
-the following command from the project directory.
-
-```powershell
-corinthos project --root . resume
-```
-
-When ready, choose **Approve at the local terminal** in the advanced editor or
-run `corinthos project --root . approve`. Read the complete fresh review and type
-its exact random `APPROVE` challenge to publish that specification.
-Other answers defer publication. Approval requires a foreground local terminal.
-Piped scripts can prepare drafts but cannot provide production approval. The
-published Project Contract describes what should be built. Workflow coordinates
-execution and Validation independently assesses the candidate. Feasibility and
-natural-language consistency remain explicit human review responsibilities.
-
-The [Project Manager guide](docs/project-manager.md) covers every command,
-negotiation states, exact approval, recovery, revision requests and the Python API.
-Use `corinthos project --help` to inspect the command list.
-
-## Plan the approved project
-
-After publishing the Project specification, copy its logical contract ID from
-the published reference and substitute it below.
-
-```powershell
-corinthos workflow --root . plan YOUR_PROJECT_CONTRACT_ID
-```
-
-Choose the exact approved revision. The numbered editor collects module
-responsibilities, assigned requirements/constraints, evaluated technology options,
-exact interfaces, verification requirements, checkpoints and optional milestones.
-Use **Review complete publication set** to inspect every TDC, Module and Workflow
-candidate, its digest, source references and previous differences. The foreground
-terminal authorizes the exact set once before dependency-ordered publication.
-Existing bounded mandates may authorize dependency-only replans after their
-scope, actor and freshness are verified.
-
-**Save for later and leave** preserves accepted planning choices. Resume with
-`corinthos workflow --root . resume` from the project directory. These are
-engineering plans. The authorized E–J continuation adds actual execution,
-recovery, a fixed local task-manager pilot and verifiable release evidence.
-
-The [Workflow planning guide](docs/workflow-planning.md) documents the full
-journey, commands, APIs, authority and partial-publication boundaries. The
-[Adapter Manager guide](docs/adapters.md) records provider capabilities and
-separate live-verification evidence.
-
-## Execute and inspect an approved plan
-
-Configure each approved checkpoint's actual verification commands, deliverable
-files and permitted source paths through guided questions. Supply the existing
-Standard policy/schema when working outside the Corinthos checkout.
+Use the virtual environment's Python (`.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on POSIX). Source commands do not install or replace the desktop app. The Windows shared installer remains `install.ps1`; see [installation and Update](docs/updater.md).
 
 ```text
-corinthos workflow --root PROJECT_ROOT configure WORKFLOW_CONTRACT_ID --policy STANDARD_YAML --policy-schema STANDARD_SCHEMA
-corinthos workflow --root PROJECT_ROOT executions
-corinthos workflow --root PROJECT_ROOT status EXECUTION_ID
-corinthos workflow --root PROJECT_ROOT execute EXECUTION_ID --provider codex --policy STANDARD_YAML --policy-schema STANDARD_SCHEMA
+corinthos project init --root <absolute-project-path>
+corinthos project open --root <absolute-project-path>
+corinthos skill list --root <absolute-project-path>
 ```
 
-Execution requests one eligible checkpoint, records the real provider attempt,
-runs actual checks and asks for preliminary technical review of the exact
-artifact. A failed or interrupted attempt preserves its evidence. Use the
-explicit `recover` journey to inspect effects before retrying or verifying
-existing files. Changed active sources require approved-plan reconciliation.
-Published independent gates remain mandatory when applicable.
+Initialization fills missing blueprint files, including all 17 bundled skills. Existing repository content, context, custom instructions and customized skills remain intact. Project identity and compact continuity live in `context_agents/corinthos/`. Numbered artifacts use `task/task_N/` and `task_agents/task_N_agents/`.
 
-The [execution and reconciliation guide](docs/workflow-execution.md) covers
-native Windows executable selection, commands, leases, review, recovery,
-preserved evidence and bounded Project Revision Requests.
+## Run a local skill
 
-## Independently validate a candidate
-
-Derive a scoped Verification Matrix from the approved Project, Standard and
-applicable source contracts. Inspect the draft, bind and review each method in
-the foreground terminal, then publish and run the exact plan.
+Configure a native executable and its arguments as a JSON array. The executable receives a UTF-8 prompt on stdin, runs without a shell and must implement the selected skill. Choose arguments supported by your installed provider. Live Codex/Claude behavior has not been verified for this redesign.
 
 ```text
-corinthos validation --root PROJECT_ROOT plan PROJECT_ID --scope PRODUCT --policy STANDARD_YAML --policy-schema STANDARD_SCHEMA
-corinthos validation --root PROJECT_ROOT show-draft DRAFT_ID
-corinthos validation --root PROJECT_ROOT bind DRAFT_ID CHECK_ID --evaluator EVALUATOR_ID
-corinthos validation --root PROJECT_ROOT publish DRAFT_ID --evaluator EVALUATOR_ID
-corinthos validation --root PROJECT_ROOT run PLAN_ID --candidate CANDIDATE_DIR --evaluator EVALUATOR_ID
+corinthos provider configure local --command-json '["/absolute/provider","argument"]'
+corinthos skill run implement-feature --root <project> --group 1 --provider local --claim repo/src --claim task/task_1/implement-report.md
+corinthos run list --root <project>
+corinthos run get --root <project> <run-id>
+corinthos run cancel --root <project> <run-id>
+corinthos run integrate --root <project> <run-id>
 ```
 
-The [Validation guide](docs/validation.md) covers evidence, evaluator separation,
-formal gate expectations, inspection, recovery and revalidation.
+Use your shell's quoting rules for the JSON array. Workers survive a CLI or desktop connection closing and hold the installed-runtime lease until their process trees are reaped. Inspect status/output and cancel explicitly. Independent claims can execute concurrently; overlapping active claims are rejected. Each run receives an isolated workspace. Integration checks all changed paths against its write scopes and original destination fingerprints before copying changes. Exit zero records process success; independent review and product acceptance remain distinct.
 
-## Source-backed reports
+Git-backed source must be clean before isolation; commit or separately preserve changes first. Provider processes are trusted local tools: isolation and ownership checks are coordination, not an operating-system security sandbox. Snapshots omit generated caches and are bounded to 10000 files/128 MiB. Output is bounded to 1 MiB and runs default to one hour. At most 64 retained runs per project are admitted; after retaining results, use `run discard --summary <outcome>` to remove terminal run artifacts.
 
-Use an existing authorized Core project and its published Project identity.
-The candidate is the exact source/package directory to inventory. Keep exports
-outside that candidate so they do not change its identity.
+## Continuity and cleanup
 
 ```text
-corinthos report --root PROJECT_ROOT generate PROJECT_CONTRACT_ID --candidate CANDIDATE_DIR
-corinthos report --root PROJECT_ROOT show-draft DRAFT_ID
-corinthos report --root PROJECT_ROOT publish DRAFT_ID
-corinthos report --root PROJECT_ROOT show REPORT_ID --revision REPORT_REVISION_ID
-corinthos report --root PROJECT_ROOT export REPORT_ID --revision REPORT_REVISION_ID --destination NEW_EXPORT_DIRECTORY
-corinthos report --root PROJECT_ROOT verify-export NEW_EXPORT_DIRECTORY
+corinthos continuity save --root <project> --pending "Next task" --verification "Relevant checks and limits" --resume "Where to continue"
+corinthos cleanup reports --root <project> --group 1 --summary "Completed work and remaining limits"
+corinthos cleanup group --root <project> --group 1 --summary "Group result and resume information"
+corinthos cleanup planning --root <project> --summary "Documentation result and remaining decisions"
 ```
 
-The [Report guide](docs/report.md) explains all five report kinds, historical
-cutoffs, latest-result selection, M1–M5 proof and gaps, delivery provenance,
-comparison, current verification and recoverable exports. Normal technical
-reports require no paid agent session or additional human approval.
+Cleanup saves the summary before removing temporary artifacts, preserves pending/blocker/resume fields and refuses active workers. Planning cleanup preserves `DECISIONS.md` by default; `--resolved-decisions` clears it only when the caller has consolidated all resolved and unrelated pending decisions. Bundled cleanup skills use this boundary. Direct external deletion is outside this guarantee.
 
-## Standard validation
+## Desktop and verification
 
-`policies/standard.yaml` declares M1–M5. `schemas/standard.schema.json` requires
-exactly those identifiers, a Boolean `required: true` flag, and a nonblank
-description for each one. The loader uses safe YAML parsing and JSON Schema
-2020-12 validation. It propagates file, syntax, and validation errors to the caller.
+The native shell, branding, bounded transport, health and signed Update remain. The desktop displays an explicit replacement-backend notice and Update. Previous Engine-specific screens require future GUI adaptation; use the replacement commands meanwhile. See [backend operations](docs/backend.md) and [architecture](docs/architecture.md).
 
-From the repository root in PowerShell.
-
-```powershell
-.\.venv\Scripts\python.exe -c "from corinthos.standard import load_standard; policy = load_standard('policies/standard.yaml', 'schemas/standard.schema.json'); print(', '.join(policy['commandments']))"
+```text
+python -m pytest --basetemp build/test-temp
+python -m ruff check .
+python -m ruff format --check .
 ```
 
-For POSIX, use `.venv/bin/python` as the executable. The API accepts explicit
-policy and schema paths. These files belong to the checkout and must accompany
-their use. Tests exercise valid policy loading, missing and disabled Commandments,
-invalid flags and structures, malformed YAML, and unsafe YAML constructors.
+Current tests cover disposable workspace preservation, controlled real worker overlap/conflicts, skill artifacts, continuity/reopen and retained Update safeguards. Offline controlled providers do not establish live AI-provider correctness. CI additionally checks installed-wheel resources, platform/runtime packaging and the native bridge. No release publication or real user-project migration is part of this snapshot.
 
-## Contract Kernel example
-
-After installation, run `examples/contract_kernel.py` with the venv Python.
-
-```powershell
-.\.venv\Scripts\python.exe examples/contract_kernel.py
-```
-
-```sh
-.venv/bin/python examples/contract_kernel.py
-```
-
-The example loads eight JSON documents, publishes them in dependency order into a
-temporary store, reopens it, resolves a historical revision and rejects a bad
-publication. Its synthetic approval receipts and interrupted validation result
-exercise the API without certifying a product. See the
-[contract API](docs/contracts.md) and [storage guide](docs/storage.md).
-
-## Repository layout
-
-| Path | Purpose |
-| --- | --- |
-| `src/corinthos/` | Package version, CLI, Standard loader and Contract Kernel. |
-| `src/corinthos/contracts/schemas/` | Eight executable schemas and shared definitions, installed with the package. |
-| `src/corinthos/project_manager/` | Negotiation service, persistent sessions, complete reviews and local terminal approval. |
-| `src/corinthos/workflow/` | Planning, exact authorization, sequential execution, durable recovery and revision reconciliation. |
-| `src/corinthos/adapters/` | Provider discovery, equivalent Standard context and separate Codex/Claude process boundaries. |
-| `examples/` | Eight sample contracts and the executable kernel demonstration. |
-| `policies/` | Versioned Standard policy. |
-| `schemas/` | Structural schema for the initial Standard. |
-| `tests/` | CLI, package, policy, contracts, negotiation, approval and persistence checks. |
-| `AGENTS.md`, `CLAUDE.md` | Equivalent agent obligations and human authority. |
-| `docs/` | Architecture, contract catalog, workflows, roadmap, and decisions. |
-| `.github/workflows/ci.yml` | Installation, CLI, lint, formatting, and test workflow. |
-
-`.corinthos/` holds private project state. `.gitignore` protects
-local environments, private state, databases, caches, and common secret files.
-For existing projects with legacy state, close the writers and follow the
-[explicit state migration](docs/storage.md#migrating-existing-project-state)
-before opening the store. The migration preserves the original copy, published
-documents, approvals, evidence digests, references and audit order.
-Review staged content before committing.
-
-## Development roadmap
-
-| Phase | Deliverable |
-| --- | --- |
-| 0 — Foundation | Package, CLI, initial Standard, instructions, tests, CI, and documentation. |
-| 1 — Contract Kernel | Eight contract schemas, immutable revisions, integrity checks, and shared persistence. |
-| 2 — Project Manager | Requirements negotiation and explicitly approved Project Contracts. |
-| 3 — Workflow + Adapters | Modular planning, checkpoints, and agent execution. |
-| 4 — Validation Engine | Independent obligation coverage, evidence, results, and gates. |
-| 5 — Report Engine | Traceable reports, decisions, and evidence history. |
-| 6 — Evolution + Hardening | Product evolution, isolated builds, feedback, recovery, and robustness. |
-
-These are construction phases. Each requires bounded tasks, tests, documentation,
-and review. The initial A–D stop is recorded historically. The owner subsequently
-authorized E–J, including the installed local task-manager pilot and a reviewed
-release. Actual results and outstanding limits remain tied to their evidence.
-
-## Engineering documentation
-
-- [v0.1 baseline and compatibility records](docs/v0.1/baseline.md)
-- [v0.1 desktop integration spike and RPC](docs/v0.1/phase-1-desktop.md)
-- [v0.1 Project Registry, Work Items, SQLite v7 and RPC v2](docs/v0.1/phase-2-projects.md)
-- [v0.1 Agent Sessions and SQLite v8](docs/v0.1/phase-3-sessions.md)
-- [v0.1 Deterministic Context Engine and SQLite v9](docs/v0.1/phase-4-context.md)
-- [v0.1 Provider Switch and crash-safe replay](docs/v0.1/phase-5-provider-switch.md)
-- [v0.1 Adaptive Workflow and scope-dependent gates](docs/v0.1/phase-6-adaptive-workflow.md)
-- [v0.1 External Git repository import](docs/v0.1/phase-7-external-project-import.md)
-- [v0.1 Corinthos Command and desktop](docs/v0.1/phase-8-command.md)
-- [Architecture and six Engines](docs/architecture.md)
-- [Eight contract types](docs/contracts.md)
-- [Project Manager tutorial, approval and service API](docs/project-manager.md)
-- [Workflow planning and exact approval](docs/workflow-planning.md)
-- [Execution, recovery and revision reconciliation](docs/workflow-execution.md)
-- [Independent Validation and formal gates](docs/validation.md)
-- [Report snapshots, history and JSON/Markdown export](docs/report.md)
-- [Phase 5 installed-wheel and real reporting verification](docs/phase-5-verification.md)
-- [Adapter Manager capabilities and verification](docs/adapters.md)
-- [SQLite storage and recovery](docs/storage.md)
-- [Phase 3 installed-wheel and native verification](docs/phase-3-verification.md)
-- [Workflows, gates, and authority](docs/workflows.md)
-- [Implementation plan and acceptance criteria](docs/implementation-plan.md)
-- [Decisions, verification history, and limits](docs/decisions.md)
-
-These documents provide the public engineering context without requiring access
-to private planning systems. The project owner retains authority over product
-requirements, binding technology and structural decisions, and human acceptance.
-
-## License
-
-Corinthos is licensed under the [Mozilla Public License 2.0](LICENSE), with SPDX
-identifier `MPL-2.0`. Its file-level copyleft requires distributed covered source
-files, including modifications, to remain under MPL 2.0. Commercial use and
-distribution are permitted subject to the license conditions, including applicable
-source-availability and notice requirements. Separate files in a larger work may
-use other licenses. See the complete license and
-[Mozilla's FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/) for the governing terms
-and guidance.
+Licensed under [MPL-2.0](LICENSE).

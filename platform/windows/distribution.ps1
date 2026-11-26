@@ -98,7 +98,7 @@ function Copy-ApplicationFiles([string] $Source, [string] $Destination) {
         }
         $target = Join-Path $Destination $item.Name
         if ($item.PSIsContainer) { Copy-ApplicationFiles $item.FullName $target }
-        elseif ($item.Extension -in @('.py', '.json', '.yaml')) { [IO.File]::Copy($item.FullName, $target) }
+        elseif ($item.Extension -in @('.py', '.json', '.yaml', '.md')) { [IO.File]::Copy($item.FullName, $target) }
     }
 }
 
@@ -120,7 +120,7 @@ function New-PrivateRuntimeCandidate([string] $Source, $Paths, [string] $Work, [
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.schema -ne 1 -or $manifest.python.version -cne '3.14.10' -or
         $manifest.python.filename -cne 'python-3.14.10-embed-amd64.zip' -or
-        $manifest.wheels.Count -ne 9) {
+        $manifest.wheels.Count -ne 3) {
         throw 'The distribution manifest does not describe the supported private runtime and dependencies.'
     }
     $candidate = Join-Path $Work 'candidate'
@@ -175,23 +175,24 @@ function Invoke-PrivatePython([string] $Install, [string[]] $Arguments) {
 
 function Test-InstallCandidate([string] $Install) {
     $probe = @'
-import platform, sys, yaml
+import platform, sys
 from importlib.resources import files
 from pathlib import Path
-from jsonschema import Draft202012Validator
-from rpds import HashTrieMap
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import corinthos
-import corinthos.bootstrap
+from corinthos.workspace import WORKSPACE_FORMAT
+from corinthos.application import service
 assert platform.python_version() == '3.14.10' and sys.flags.isolated and sys.flags.no_site
 runtime = Path(sys.executable).resolve().parent
 app = runtime.parent / 'app'
 assert all(Path(item).resolve().is_relative_to(runtime) or Path(item).resolve() == app for item in sys.path)
 assert Path(corinthos.__file__).resolve().is_relative_to(app)
-assert yaml.__with_libyaml__ and HashTrieMap({'ready': True})['ready']
-assert files('corinthos.resources').joinpath('standard.schema.json').is_file()
-Draft202012Validator.check_schema({'type': 'object'})
+assert WORKSPACE_FORMAT == 1
+blueprint = files('corinthos.resources').joinpath('blueprint')
+skills = blueprint.joinpath('.agents', 'skills')
+assert len([entry for entry in skills.iterdir() if entry.joinpath('SKILL.md').is_file()]) == 17
+assert {'project.init', 'skill.run', 'run.cancel', 'continuity.save', 'update.finish'} <= service.OPERATIONS.keys()
 key = Ed25519PublicKey.from_public_bytes(bytes.fromhex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'))
 signature = bytes.fromhex('e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b')
 key.verify(signature, b'')

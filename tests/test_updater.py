@@ -13,8 +13,8 @@ from threading import Event, Thread
 import pytest
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from test_application_workspace import _call, _transcript
-from test_application_workspace import wire as wire
+from test_sidecar import _call, _transcript
+from test_sidecar import wire as wire
 
 from corinthos import cli, updater, user_state
 from corinthos.application import sidecar
@@ -47,7 +47,7 @@ def signed_candidate(tmp_path, monkeypatch):
     release = {
         "product_version": "0.1.1",
         "python_package_version": "0.1.1",
-        "sqlite_schema": 9,
+        "workspace_format": 1,
         "rpc_protocol": 2,
         "desktop_identifier": "org.corinthos.desktop",
         "build_platform": "windows",
@@ -164,7 +164,7 @@ def test_release_tool_refuses_secret_in_payload_and_existing_key_before_acl(
 @pytest.mark.parametrize(
     "change,code",
     [
-        (lambda value: value.update(storage_schema=10), "INCOMPATIBLE_SCHEMA"),
+        (lambda value: value.update(workspace_format=10), "INCOMPATIBLE_SCHEMA"),
         (lambda value: value.update(version="0.1.0"), "INVALID_RELEASE"),
         (lambda value: value.update(version="0.0.9"), "INVALID_RELEASE"),
         (lambda value: value.update(platform="linux-x64"), "INVALID_RELEASE"),
@@ -173,7 +173,7 @@ def test_release_tool_refuses_secret_in_payload_and_existing_key_before_acl(
         (lambda value: value["payload"].append(dict(value["payload"][0])), "INVALID_RELEASE"),
     ],
 )
-def test_authenticated_invalid_contracts_are_rejected(signed_candidate, change, code):
+def test_authenticated_invalid_manifests_are_rejected(signed_candidate, change, code):
     _, _, manifest, _, _, key = signed_candidate
     change(manifest)
     data = json.dumps(manifest).encode()
@@ -392,12 +392,10 @@ def test_no_live_release_and_failed_source_have_explicit_terminal_outcomes(servi
     assert result["phase"] == "FAILED" and result["error"]["code"] == "SOURCE_UNAVAILABLE"
 
 
-def test_finish_refuses_to_close_an_owned_active_session(service, monkeypatch):
+def test_finish_refuses_to_close_an_owned_active_worker(service, monkeypatch):
     identity = updater.update_check()["operation_id"]
     updater.set_phase(identity, "READY")
-    monkeypatch.setattr(
-        "corinthos.sessions.supervisor.SessionSupervisor.has_active", lambda _self: True
-    )
+    monkeypatch.setattr("corinthos.runtime.has_active", lambda: True)
     messages = _transcript(
         [
             _call("system.handshake", 1, protocol_version=2),
@@ -431,7 +429,7 @@ def test_passive_status_is_readonly_and_does_not_construct_project_store(tmp_pat
     def forbidden(*_args, **_kw):
         pytest.fail("Passive status attempted a mutation or provider operation")
 
-    monkeypatch.setattr("corinthos.contracts.ContractStore.__init__", forbidden)
+    monkeypatch.setattr("corinthos.workspace.initialize", forbidden)
     monkeypatch.setattr(updater, "_receive", forbidden)
     monkeypatch.setattr(updater, "_spawn", forbidden)
     assert updater.update_status()["phase"] == "UNSUPPORTED"
@@ -530,9 +528,9 @@ def test_cli_uses_the_same_shared_operation_and_status(service, capsys):
     assert cli.main(["update", "check"]) == 0
     checked = json.loads(capsys.readouterr().out)
     identity = checked["operation_id"]
-    assert cli.main(["update", "status", identity]) == 0
+    assert cli.main(["update", "status", "--operation-id", identity]) == 0
     assert json.loads(capsys.readouterr().out)["operation_id"] == identity
-    assert cli.main(["update"]) == 0
+    assert cli.main(["update", "status"]) == 0
     assert json.loads(capsys.readouterr().out)["operation_id"] == identity
 
 

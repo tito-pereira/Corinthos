@@ -55,11 +55,11 @@ def create_bundle(candidate: Path, key: Ed25519PrivateKey, output: Path):
         for entry in payload:
             bundle.write(candidate / entry["path"], entry["path"])
     value = {
-        "schema": 1,
+        "schema": 2,
         "product": "corinthos-core",
         "version": version,
         "platform": "windows-x64",
-        "storage_schema": release["sqlite_schema"],
+        "workspace_format": release["workspace_format"],
         "artifact": {
             "name": archive.name,
             "bytes": archive.stat().st_size,

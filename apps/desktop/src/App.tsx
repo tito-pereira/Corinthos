@@ -795,6 +795,16 @@ export function App() {
     </ApplicationShell>;
   }
 
+  if (ready && snapshot.handshake.methods.includes("skill.run")) {
+    return renderShell(<section aria-labelledby="prototype-title">
+      <h2 id="prototype-title">Prototype workspace backend</h2>
+      <p>Project work now uses project-local skills. The previous Engine screens are unavailable until their GUI bindings are adapted.</p>
+      <p>Use the shared command with an explicit project root:</p>
+      <pre>corinthos project init --root &lt;project&gt;{ "\n" }corinthos skill list --root &lt;project&gt;{ "\n" }corinthos run list --root &lt;project&gt;</pre>
+      <ProductUpdate methods={snapshot.handshake.methods} />
+    </section>, setScreen, false);
+  }
+
   return ready ? <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
         creation={creation} onCreation={setCreation} onCreate={createProject} importDraft={importDraft} onImportDraft={setImportDraft}
         screen={screen} setScreen={setScreen} view={view} setView={setView} project={project} setProject={setProject}
