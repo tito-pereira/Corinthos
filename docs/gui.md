@@ -20,7 +20,7 @@ Importing otherwise unmanaged source creates a disclosed independent working-cop
 
 ## Ideas, tasks and project changes
 
-Future Ideas reads `context/DECISIONS.md`; Task List reads `task/implementation-groups.md` afresh. Both are read-only, summarize actual content and show `Nothing Yet` when absent/empty/no-pending. Access errors or malformed group records remain errors. Merely opening a project, recent list or summary never dispatches work.
+Idea List reads `context/DECISIONS.md`; Task List reads `task/implementation-groups.md` afresh. Both are read-only, summarize actual content and show `Nothing Yet` when absent/empty/no-pending. Access errors or malformed group records remain errors. Merely opening a project, recent list or summary never dispatches work.
 
 Execute Tasks checks current pending/resumable groups and invokes that project's local `orchestrator`, reusing an active run. Otherwise it shows `No Tasks Yet` without dispatch. Process completion is observable separately from whether its changes were applied.
 

@@ -46,7 +46,7 @@ describe("two-page GUI",()=>{
     expect(host.textContent).toContain("This is the Fixture project page");
   });
   it("reads summaries without dispatch and uses exact empty/task states",async()=>{
-    await render();await click("Resume Project");await click("... Choose Other");await click("Future Ideas");expect(host.querySelector("[role=dialog]")?.textContent).toContain("Nothing Yet");
+    await render();await click("Resume Project");await click("... Choose Other");await click("Idea List");expect(host.querySelector("[role=dialog]")?.textContent).toContain("Nothing Yet");
     await act(async()=>host.querySelector<HTMLButtonElement>("[aria-label='Close dialog']")!.click());await click("Task List");expect(host.querySelector("[role=dialog]")?.textContent).toContain("Nothing Yet");
     await act(async()=>host.querySelector<HTMLButtonElement>("[aria-label='Close dialog']")!.click());
     expect(invoke.mock.calls.filter(call=>call[1]?.method==="gui.summary")).toHaveLength(2);expect(invoke.mock.calls.some(call=>call[1]?.method==="gui.execute")).toBe(false);

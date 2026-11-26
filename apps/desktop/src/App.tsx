@@ -317,7 +317,7 @@ export function App() {
     <aside className="sidebar"><button className="brand" aria-label="Main page" onClick={() => void selectProject(null).catch(failure => setError(errorText(failure)))}><img src={reference} alt="Corinthos — four-column temple and silver wordmark" /></button>
       <nav aria-label={project ? "Project navigation" : "Main navigation"}>{project ? <>
         <p className="project-name" title={project.root}>{project.name}</p>
-        <button onClick={() => void openSummary("ideas")}>Future Ideas</button><button onClick={() => void openSummary("tasks")}>Task List</button><button onClick={() => void executeTasks()} disabled={!ready}>Execute Tasks</button>
+        <button onClick={() => void openSummary("ideas")}>Idea List</button><button onClick={() => void openSummary("tasks")}>Task List</button><button onClick={() => void executeTasks()} disabled={!ready}>Execute Tasks</button>
       </> : <>
         <button onClick={() => {setError(""); setModal("create");}} disabled={!ready}>Create Project</button>
         <button aria-expanded={showRecent} onClick={() => {setShowRecent(!showRecent); if (!showRecent) void readRecents().catch(failure => setError(errorText(failure)));}} disabled={!ready || picking}>Resume Project</button>
@@ -334,7 +334,7 @@ export function App() {
       <ConversationView key={currentConversation || scope.current} title={project ? `This is the ${project.name} project page` : "Welcome to Corinthos"} messages={conversation?.messages || []} busy={busy || !ready || !conversation} error={conversation?.omitted ? "Older messages were omitted from this bounded view." : undefined} onSend={message => void send(message)} onCancel={currentOperation ? () => void bridge.cancelOperation(currentOperation).then(rememberOperation).catch(failure => setError(errorText(failure))) : undefined} toolbar={toolbar} actions={actions} />
     </main>
   </div>
-  {modal && <Modal title={modal === "create" ? "Create Project" : modal === "provider" ? "Configure provider" : modal === "update" ? "Update Corinthos" : modal === "discard" ? "Discard isolated run" : `${modal === "ideas" ? "Future Ideas" : "Task List"} — ${summaryProject}`} onClose={() => void closeModal()}>
+  {modal && <Modal title={modal === "create" ? "Create Project" : modal === "provider" ? "Configure provider" : modal === "update" ? "Update Corinthos" : modal === "discard" ? "Discard isolated run" : `${modal === "ideas" ? "Idea List" : "Task List"} — ${summaryProject}`} onClose={() => void closeModal()}>
     {error && <p role="alert">{error}</p>}
     {modal === "create" && <form onSubmit={event => {event.preventDefault(); void createProject();}}>
       <label htmlFor="project-name">Project name</label><input id="project-name" value={name} maxLength={80} required disabled={Boolean(creationId)} onChange={event => setName(event.target.value)} />
