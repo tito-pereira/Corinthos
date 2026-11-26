@@ -69,7 +69,7 @@ def _identity(root: Path) -> dict:
     ):
         raise IntegrityError("Workspace metadata is incompatible or belongs to a different root.")
     return {
-        "root": str(root),
+        "root": value["root"],
         "project_id": value["project_id"],
         "workspace_format": WORKSPACE_FORMAT,
     }

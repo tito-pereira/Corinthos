@@ -6,16 +6,16 @@ import subprocess
 import threading
 import time
 
-from corinthos.filesystem import file_lock, read_json
+from corinthos.filesystem import read_json
 from corinthos.process_control import start_process
-from corinthos.runtime import _change, _run_directory, get
+from corinthos.runtime import _change, _run_directory, get, worker_ownership
 from corinthos.runtime_gate import client_runtime
 
 
 def execute(root, run_id):
-    target = _run_directory(root, run_id)
-    run = get(root, run_id)
-    with file_lock(target / "owner.lock", blocking=False) as owner, client_runtime():
+    with worker_ownership(root, run_id) as owner, client_runtime():
+        target = _run_directory(root, run_id)
+        run = get(root, run_id)
         managed = None
         reader = writer = None
         status, error = "FAILED", None

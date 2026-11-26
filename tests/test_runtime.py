@@ -2,6 +2,8 @@
 """Real offline provider processes prove overlap, isolation and guarded integration."""
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
@@ -21,6 +23,122 @@ def test_provider_executable_is_pinned_before_cwd_changes(monkeypatch):
     result = validate_command([Path(sys.executable).name, "-c", "pass"])
     assert Path(result[0]).is_absolute()
     assert Path(result[0]).resolve() == Path(sys.executable).resolve()
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_idle_moved_or_deleted_project_does_not_block_update(tmp_path, remove):
+    root = tmp_path / "project"
+    initialize(root)
+    run = runtime.start(root, "implement-feature", command=command("pass"))
+    assert wait(root, run["run_id"])["status"] == "SUCCEEDED"
+    deadline = time.monotonic() + 5
+    while runtime.has_active() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not runtime.has_active()
+    assert root.resolve().is_relative_to(tmp_path.resolve())
+    if remove:
+        shutil.rmtree(root)
+    else:
+        root.rename(tmp_path / "moved")
+    assert not runtime.has_active()
+
+
+def test_worker_ownership_survives_missing_project_and_expired_admission_is_reaped(tmp_path):
+    from corinthos.filesystem import atomic_json, read_json
+    from corinthos.user_state import state_root
+
+    root = tmp_path / "project"
+    initialize(root)
+    run_id = "a" * 32
+    runtime._register(root, run_id)
+    with runtime.worker_ownership(root, run_id):
+        root.rename(tmp_path / "moved")
+        assert runtime.has_active()
+    assert not runtime.has_active()
+    runtime._register(root, run_id)
+    registry = state_root() / "worker-owners.json"
+    owners = read_json(registry)
+    owners[run_id]["created_at"] -= 16
+    atomic_json(registry, owners)
+    assert not runtime.has_active()
+    assert read_json(registry) == {}
+    with pytest.raises(IntegrityError, match="expired"):
+        with runtime.worker_ownership(root, run_id):
+            pytest.fail("Expired admission acquired ownership")
+    atomic_json(registry, {run_id: {"invalid": True}})
+    assert runtime.has_active()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows paths are case-insensitive")
+def test_windows_root_casing_preserves_run_access_cancellation_and_integration(tmp_path):
+    root = tmp_path / "CaseProject"
+    identity = initialize(root)
+    alternate = Path(str(root).swapcase())
+    assert open_project(alternate) == identity
+    run = runtime.start(
+        root,
+        "implement-feature",
+        command=command("from pathlib import Path;Path('repo/result.txt').write_text('result')"),
+        claims=["repo/result.txt"],
+    )
+    assert wait(alternate, run["run_id"])["status"] == "SUCCEEDED"
+    assert runtime.list_runs(alternate)[0]["run_id"] == run["run_id"]
+    runtime.integrate(alternate, run["run_id"])
+    assert (root / "repo/result.txt").read_text() == "result"
+    other = tmp_path / "other"
+    initialize(other)
+    with pytest.raises(IntegrityError, match="not found"):
+        runtime.get(other, run["run_id"])
+    run = runtime.start(root, "implement-feature", command=command("import time;time.sleep(30)"))
+    runtime.cancel(alternate, run["run_id"])
+    assert wait(alternate, run["run_id"])["status"] == "CANCELLED"
+
+
+def test_parallel_consolidations_retain_both_summaries_and_failed_cleanup_preserves_reports(
+    tmp_path,
+):
+    root = tmp_path / "project"
+    initialize(root)
+    barrier = tmp_path / "barrier"
+    barrier.mkdir()
+    code = """
+import sys, time
+from pathlib import Path
+from corinthos import continuity
+root, barrier, name = map(Path, sys.argv[1:])
+original = continuity.show
+def slow_read(root):
+    value = original(root)
+    time.sleep(.1)
+    return value
+continuity.show = slow_read
+(barrier / name).touch()
+deadline = time.monotonic() + 10
+while len(list(barrier.iterdir())) < 2 and time.monotonic() < deadline:
+    time.sleep(.01)
+assert len(list(barrier.iterdir())) == 2
+continuity.consolidate(root, str(name))
+"""
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", code, str(root), str(barrier), name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for name in ("first group result", "second group result")
+    ]
+    for process in processes:
+        _, error = process.communicate(timeout=15)
+        assert process.returncode == 0, error.decode()
+    completed = continuity.show(root)["completed"]
+    assert "first group result" in completed and "second group result" in completed
+    task, _ = group_paths(root, 1, create=True)
+    report = task / "implement-report.md"
+    report.write_text("only temporary evidence")
+    continuity.save(root, completed="x" * 16000)
+    with pytest.raises(IntegrityError, match="nothing was removed"):
+        continuity.cleanup(root, "reports", group=1, summary="Additional outcome")
+    assert report.read_text() == "only temporary evidence"
 
 
 def test_clean_git_source_is_cloned_and_dirty_source_is_preserved(tmp_path):

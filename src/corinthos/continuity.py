@@ -40,13 +40,19 @@ def save(root, **fields):
 def consolidate(root, summary):
     if not isinstance(summary, str) or not summary.strip() or len(summary) > 8000:
         raise IntegrityError("Supply a concise cleanup summary of at most 8000 characters.")
-    current = show(root)
-    completed = current["completed"]
-    if summary not in completed:
-        completed = (completed + "\n" + summary).strip()
-    if len(completed) > 16000:
-        raise IntegrityError("Consolidate completed context before cleanup; nothing was removed.")
-    return save(root, completed=completed)
+    target = directory(root)
+    with file_lock(target / "project.lock"):
+        current = show(root)
+        completed = current["completed"]
+        if summary not in completed:
+            completed = (completed + "\n" + summary).strip()
+        if len(completed) > 16000:
+            raise IntegrityError(
+                "Consolidate completed context before cleanup; nothing was removed."
+            )
+        current["completed"] = completed
+        atomic_json(target / "continuity.json", current)
+    return current
 
 
 def cleanup(root, kind, *, summary, group=None, resolved_decisions=False):

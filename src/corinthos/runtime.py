@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from corinthos.errors import ConflictError, IntegrityError
@@ -79,8 +80,11 @@ def _change(root, run_id, **values):
 
 
 def _alive(root, run):
+    path = _owner_path(run["run_id"])
+    if not path.exists():
+        return run["status"] == "STARTING" and time.time() - run["created_at"] < 15
     try:
-        with file_lock(_run_directory(root, run["run_id"]) / "owner.lock", blocking=False):
+        with file_lock(path, blocking=False):
             return run["status"] == "STARTING" and time.time() - run["created_at"] < 15
     except ConflictError:
         return True
@@ -118,30 +122,86 @@ def get(root, run_id):
     return run
 
 
-def _register(root):
-    path = state_root() / "workers.json"
+def _owner_path(run_id):
+    return state_root() / "worker-owners" / (run_id + ".lock")
+
+
+def _owners():
+    value = read_json(state_root() / "worker-owners.json", {})
+    if not isinstance(value, dict) or len(value) > 8192:
+        raise IntegrityError("Unsupported worker ownership registry.")
+    for identity, owner in value.items():
+        if (
+            not isinstance(identity, str)
+            or not _ID.fullmatch(identity)
+            or not isinstance(owner, dict)
+            or set(owner) != {"root", "created_at"}
+            or not isinstance(owner["root"], str)
+            or not Path(owner["root"]).is_absolute()
+            or type(owner["created_at"]) not in {int, float}
+        ):
+            raise IntegrityError("Unsupported worker ownership registry.")
+    return value
+
+
+def _register(root, run_id):
+    path = state_root() / "worker-owners.json"
     with file_lock(path.with_suffix(".lock")):
-        roots = read_json(path, [])
-        if not isinstance(roots, list) or any(not isinstance(item, str) for item in roots):
-            raise IntegrityError("Unsupported worker registry.")
-        if str(root) not in roots:
-            if len(roots) >= 128:
-                raise IntegrityError(
-                    "Worker registry contains 128 projects; retain context and compact it before adding another."
-                )
-            atomic_json(path, [*roots, str(root)])
+        owners = _owners()
+        if len(owners) >= 8192:
+            raise IntegrityError(
+                "Worker ownership registry is full; stop or recover stale workers."
+            )
+        owners[run_id] = {"root": str(root), "created_at": time.time()}
+        atomic_json(path, owners)
+
+
+@contextmanager
+def worker_ownership(root, run_id):
+    """Keep ownership outside movable project data, including descendant cleanup."""
+    path = state_root() / "worker-owners.json"
+    lease = file_lock(_owner_path(run_id), blocking=False)
+    with file_lock(path.with_suffix(".lock")):
+        owner = _owners().get(run_id)
+        if owner is None or os.path.normcase(owner["root"]) != os.path.normcase(str(root)):
+            raise IntegrityError("Worker admission expired or belongs to a different project.")
+        stream = lease.__enter__()
+    try:
+        yield stream
+    finally:
+        lease.__exit__(None, None, None)
+        with file_lock(path.with_suffix(".lock")):
+            owners = _owners()
+            owners.pop(run_id, None)
+            atomic_json(path, owners)
+            _owner_path(run_id).unlink(missing_ok=True)
 
 
 def has_active():
     """Check ownership locks across clients/projects, never a remembered PID alone."""
-    for root in read_json(state_root() / "workers.json", []):
-        try:
-            if any(run["status"] in ACTIVE for run in list_runs(root)):
-                return True
-        except (IntegrityError, OSError):
-            # Ambiguous project ownership must not permit installation replacement.
-            return True
-    return False
+    path = state_root() / "worker-owners.json"
+    try:
+        with file_lock(path.with_suffix(".lock")):
+            owners = _owners()
+            changed = active = False
+            for run_id, owner in list(owners.items()):
+                try:
+                    with file_lock(_owner_path(run_id), blocking=False):
+                        if time.time() - owner["created_at"] < 15:
+                            active = True
+                            continue
+                except ConflictError:
+                    active = True
+                    continue
+                del owners[run_id]
+                _owner_path(run_id).unlink(missing_ok=True)
+                changed = True
+            if changed:
+                atomic_json(path, owners)
+        return active
+    except (ConflictError, IntegrityError, OSError):
+        # Unconfirmed ownership must not permit installation replacement.
+        return True
 
 
 def _claims(values):
@@ -292,7 +352,6 @@ def start(
     prompt = build_prompt(root, skill, group=group, instruction=instruction)
     run_id = uuid.uuid4().hex
     target = _run_directory(root, run_id)
-    _register(root)
     with file_lock(_directory(root) / "project.lock"):
         runs = _read_runs(root)
         if len(runs) >= 64:
@@ -340,6 +399,7 @@ def start(
         }
         atomic_json(_directory(root) / "runs.json", runs)
     try:
+        _register(root, run_id)
         flags = (
             {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
             if os.name == "nt"
@@ -353,7 +413,7 @@ def start(
             close_fds=True,
             **flags,
         )
-    except OSError as error:
+    except (IntegrityError, OSError) as error:
         _change(root, run_id, status="FAILED", error=str(error))
         raise
     return runs[run_id]
