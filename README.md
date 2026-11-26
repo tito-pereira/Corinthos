@@ -8,13 +8,13 @@ This development snapshot replaces the former Engines, project contracts and app
 
 Python 3.12 or newer is required. From the repository:
 
-```text
+```powershell
 python -m venv .venv
-python -m pip install -e ".[dev]"
-python -m corinthos --help
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m corinthos --help
 ```
 
-Use the virtual environment's Python (`.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on POSIX). Source commands do not install or replace the desktop app. The Windows shared installer remains `install.ps1`; see [installation and Update](docs/updater.md).
+On POSIX, use `.venv/bin/python` for the last two commands. Continue with the virtual environment's Python and console command (`.venv/Scripts/corinthos.exe` on Windows or `.venv/bin/corinthos` on POSIX), or activate that environment first. Source commands do not install or replace the desktop app. The Windows shared installer remains `install.ps1`; see [installation and Update](docs/updater.md).
 
 ```text
 corinthos project init --root <absolute-project-path>
