@@ -98,6 +98,9 @@ def build_prompt(root, name, group=None, instruction="") -> str:
     for item in inputs:
         if item.exists():
             sections.append(f"## {item.relative_to(path).as_posix()}\n{_read(item)}")
+    from corinthos.gui_content import supporting_context
+
+    sections.append(supporting_context(path))
     sections.append(f"## Selected SKILL.md\n{skill['content']}")
     if instruction:
         sections.append(f"## Requested work\n{instruction}")

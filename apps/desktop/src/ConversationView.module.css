@@ -1,0 +1,93 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.conversation {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: clamp(12px, 2.4vw, 32px);
+  color: var(--text, #e9edf4);
+}
+.empty { justify-content: center; }
+.welcome { width: 100%; margin: 0 auto 24px; text-align: center; }
+.title {
+  max-width: 840px;
+  margin: 0 auto;
+  font-family: var(--display-font, Georgia, "Times New Roman", serif);
+  font-size: clamp(1.55rem, 3.2vw, 3rem);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: .025em;
+  overflow-wrap: anywhere;
+  color: var(--text, #edf1f7);
+  text-shadow: 0 2px 14px #0008, 0 0 28px #4dc9ff22;
+}
+.body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-color: #a88a54 #0c1c30; }
+.messages { display: flex; flex-direction: column; gap: 18px; max-width: 840px; margin: 0 auto; padding: 4px 2px 24px; }
+.message {
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid #d2b57628;
+  border-radius: 14px;
+  background: var(--panel, #0d2036ee);
+  box-shadow: 0 4px 18px #0002;
+}
+.user { align-self: flex-end; width: min(92%, 720px); border-color: #70cfe54d; background: #12324bdb; }
+.assistant { align-self: stretch; }
+.messageHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.messageHeading strong { color: var(--gold, #e0c68c); font-size: .85rem; letter-spacing: .04em; }
+.user .messageHeading strong { color: var(--cyan, #87e6ff); }
+.status, .notice, .composerNote { color: var(--muted, #a9bacd); font-size: .75rem; }
+.status { overflow-wrap: anywhere; text-align: right; }
+.messageText { margin: 0; font-size: .96rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice { margin: 10px 0 0; }
+.messageError, .error { color: #ffc4b8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.messageError { margin: 10px 0 0; font-size: .86rem; }
+.error { max-height: 100px; margin: 0 0 12px; padding: 12px; border: 1px solid #faaf8f55; border-radius: 10px; background: #3a1d24d9; overflow: auto; }
+.dock { flex-shrink: 0; width: 100%; max-width: 840px; margin: 0 auto; }
+.actions { max-height: min(24vh, 160px); overflow-y: auto; margin-bottom: 12px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; color: var(--muted, #a9bacd); }
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #c9aa6d80;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #132b43f5, #071626f5);
+  box-shadow: 0 0 0 1px #e7d6a610 inset, 0 10px 32px #0004;
+}
+.composer:focus-within { border-color: var(--cyan, #87e6ff); box-shadow: 0 0 0 2px #66dfff25, 0 10px 32px #0004; }
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  max-height: 140px;
+  padding: 6px 4px;
+  border: 0;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: var(--text, #e9edf4);
+  font: inherit;
+  line-height: 1.45;
+}
+.composer textarea::placeholder { color: var(--muted, #a9bacd); opacity: 1; }
+.composer textarea:disabled { opacity: .7; }
+.buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.buttons button { min-height: 38px; padding: 8px 16px; border-radius: 9px; font: inherit; font-size: .85rem; cursor: pointer; }
+.send { border: 1px solid #f2daa3; background: linear-gradient(#ead29a, #b9954f); color: #09172a; font-weight: 700; }
+.send:disabled { opacity: .45; cursor: default; }
+.cancel { border: 1px solid #9abbd180; background: #112a42; color: var(--text, #e9edf4); }
+.buttons button:focus-visible { outline: 2px solid var(--cyan, #87e6ff); outline-offset: 3px; }
+.composerNote { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin: 9px 4px 0; line-height: 1.4; }
+.visuallyHidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (max-width: 760px) {
+  .message { padding: 13px; }
+  .composer { gap: 6px; padding: 9px; }
+  .buttons { max-width: 90px; }
+  .buttons button { padding: 8px 12px; }
+  .composerNote { font-size: .67rem; }
+}

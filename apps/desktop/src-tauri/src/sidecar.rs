@@ -361,20 +361,9 @@ fn decode(frame: &[u8]) -> Result<Wire> {
                     && error.get("message").and_then(Value::as_str).is_some()
             })
         {
-            let creation_code = object["error"].get("data")
-                .and_then(|data| data.get("creation_code"))
-                .and_then(Value::as_str);
-            let error = match (object["error"].get("code").and_then(Value::as_i64), creation_code) {
-                (Some(-32602), Some("INVALID_INPUT")) => "PROJECT_CREATE_INVALID_INPUT",
-                (Some(-32002), Some("CONFLICT")) => "PROJECT_CREATE_CONFLICT",
-                (Some(-32002), Some("ACCESS_DENIED")) => "PROJECT_CREATE_ACCESS_DENIED",
-                (Some(-32002), Some("REGISTRY_INCOMPLETE")) => "PROJECT_CREATE_REGISTRY_INCOMPLETE",
-                (Some(-32002), Some("STATE_UNAVAILABLE")) => "PROJECT_CREATE_STATE_UNAVAILABLE",
-                _ => "The Corinthos sidecar rejected the request.",
-            };
             return Ok(Wire::Response(
                 id,
-                Err(error),
+                Err("The Corinthos sidecar rejected the request."),
             ));
         }
     }

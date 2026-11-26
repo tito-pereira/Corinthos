@@ -196,12 +196,10 @@ fn decode_rejects_mixed_or_unrecognized_frames() {
 }
 
 #[test]
-fn creation_errors_forward_only_known_recovery_codes() {
+fn protocol_errors_do_not_forward_private_details() {
     for (code, marker) in [
-        ("CONFLICT", "PROJECT_CREATE_CONFLICT"),
-        ("ACCESS_DENIED", "PROJECT_CREATE_ACCESS_DENIED"),
-        ("REGISTRY_INCOMPLETE", "PROJECT_CREATE_REGISTRY_INCOMPLETE"),
-        ("STATE_UNAVAILABLE", "PROJECT_CREATE_STATE_UNAVAILABLE"),
+        ("CONFLICT", "The Corinthos sidecar rejected the request."),
+        ("ACCESS_DENIED", "The Corinthos sidecar rejected the request."),
         ("unknown private data", "The Corinthos sidecar rejected the request."),
     ] {
         let frame = serde_json::to_vec(&json!({
@@ -210,7 +208,7 @@ fn creation_errors_forward_only_known_recovery_codes() {
         })).unwrap();
         match decode(&frame).unwrap() {
             Wire::Response(5, Err(actual)) => assert_eq!(actual, marker),
-            _ => panic!("expected a bounded creation rejection"),
+            _ => panic!("expected a bounded protocol rejection"),
         }
     }
 }
@@ -228,9 +226,14 @@ fn initialization_uses_the_real_backend_and_preserves_retry_identity() {
     command.env("XDG_STATE_HOME", directory.join("user"));
     let (mut child, handshake) = Sidecar::launch(command, no_events(), HANDSHAKE_TIMEOUT, &CORE_METHODS).unwrap();
     assert!(handshake.supports("project.init"));
+    assert!(handshake.supports("gui.projects"));
+    assert!(handshake.supports("gui.conversation.send"));
     let first = child.request("project.init", json!({"root": project})).unwrap();
     assert_eq!(first["workspace_format"], 1);
     assert!(first["project_id"].is_string());
+    let opened = child.request("gui.open", json!({"path": project})).unwrap();
+    assert_eq!(opened["ok"], true);
+    assert_eq!(opened["value"]["project_id"], first["project_id"]);
     let instructions = project.join("AGENTS.md");
     std::fs::write(&instructions, "Custom instructions\n").unwrap();
     let second = child.request("project.init", json!({"root": project})).unwrap();

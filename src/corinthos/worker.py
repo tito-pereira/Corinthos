@@ -8,7 +8,7 @@ import time
 
 from corinthos.filesystem import read_json
 from corinthos.process_control import start_process
-from corinthos.runtime import _change, _run_directory, get, worker_ownership
+from corinthos.runtime import _change, _run_directory, get, prepare, worker_ownership
 from corinthos.runtime_gate import client_runtime
 
 
@@ -22,6 +22,9 @@ def execute(root, run_id):
         try:
             if (target / "cancel.json").exists():
                 status, error = "CANCELLED", "Cancelled before provider launch."
+                return
+            if not prepare(root, run_id):
+                status, error = "CANCELLED", "Cancelled during workspace preparation."
                 return
             request = read_json(target / "request.json")
             prompt = (target / "prompt.txt").read_bytes()
@@ -41,7 +44,7 @@ def execute(root, run_id):
             def read():
                 total = 0
                 with (target / "output.txt").open("wb") as output:
-                    while data := process.stdout.read(4096):
+                    while data := process.stdout.read1(4096):
                         total += len(data)
                         if total > 1024 * 1024:
                             exceeded.set()

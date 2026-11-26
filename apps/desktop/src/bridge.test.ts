@@ -1,85 +1,33 @@
-// SPDX-License-Identifier: MPL-2.0
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bridge, ProjectCreationError } from "./bridge";
-
+﻿// SPDX-License-Identifier: MPL-2.0
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { bridge, type ProjectRef } from "./bridge";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-
-beforeEach(() => vi.resetAllMocks());
-
-it("requests passive runtime diagnostics with an empty typed parameter object", async () => {
-  const diagnostics = { python_implementation: "CPython", python_version: "3.14.10", supported_schema_version: 9 };
-  invoke.mockResolvedValueOnce(diagnostics);
-  expect(await bridge.diagnostics()).toBe(diagnostics);
-  expect(invoke.mock.calls).toEqual([["workspace_request", { method: "system.diagnostics", params: {} }]]);
-});
-
-describe("project onboarding transport", () => {
-  it("binds explicit opening and migration to the inspected root and digest", async () => {
-    const inspection = { root: "C:\\project", status: "CURRENT", inspection_digest: "digest" };
-    invoke.mockResolvedValueOnce(inspection).mockResolvedValueOnce({ root: inspection.root }).mockResolvedValueOnce({ root: inspection.root });
-    expect(await bridge.inspectProject(inspection.root)).toBe(inspection);
-    await bridge.openInspectedProject(inspection.root, inspection.inspection_digest);
-    await bridge.openInspectedProject(inspection.root, inspection.inspection_digest, true);
-    expect(invoke.mock.calls).toEqual([
-      ["workspace_request", { method: "project.inspect", params: { root: inspection.root } }],
-      ["workspace_request", { method: "project.open_checked", params: { root: inspection.root, inspection_digest: "digest", migrate: false } }],
-      ["workspace_request", { method: "project.open_checked", params: { root: inspection.root, inspection_digest: "digest", migrate: true } }],
-    ]);
-  });
-});
-
-describe("native directory selection transport", () => {
-  it("returns cancellation separately from a native failure", async () => {
-    invoke.mockResolvedValueOnce(null);
+const project: ProjectRef = {root: "C:/original", project_id: "origin", workspace_format: 1, name: "Original", description: ""};
+beforeEach(() => invoke.mockReset());
+describe("current GUI contracts", () => {
+  it("preserves native picker cancellation", async () => {
+    invoke.mockResolvedValue(null);
     expect(await bridge.selectProjectDirectory()).toBeNull();
-    invoke.mockRejectedValueOnce("DIRECTORY_PICKER_UNAVAILABLE");
-    await expect(bridge.selectProjectDirectory()).rejects.toBe("DIRECTORY_PICKER_UNAVAILABLE");
-    expect(invoke.mock.calls).toEqual([["select_project_directory"], ["select_project_directory"]]);
+    expect(invoke).toHaveBeenCalledWith("select_project_directory");
   });
-
-  it("opens independently while the serialized Python request queue is pending", async () => {
-    let finish: (value: object) => void = () => {};
-    invoke.mockImplementation((command) => command === "workspace_request"
-      ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve("C:\\selected"));
-    const opening = bridge.project("C:\\project", true);
-    await Promise.resolve();
-    expect(await bridge.selectProjectDirectory()).toBe("C:\\selected");
-    expect(invoke.mock.calls.map(([command]) => command)).toEqual(["workspace_request", "select_project_directory"]);
-    finish({ root: "C:\\project" });
-    await opening;
+  it("propagates bounded GUI failures without successful project results", async () => {
+    invoke.mockResolvedValue({ok: false, error: "Destination already exists"});
+    await expect(bridge.createProject("name", "description", "local")).rejects.toThrow("Destination already exists");
   });
-});
-
-describe("project creation transport", () => {
-  it("sends exactly the selected root and display name and returns the backend summary", async () => {
-    const summary = { root: "C:\\projects\\one", display_name: "My project", initialized: true };
-    invoke.mockResolvedValueOnce(summary);
-    expect(await bridge.createProject(summary.root, summary.display_name)).toBe(summary);
-    expect(invoke.mock.calls).toEqual([["workspace_request", {
-      method: "project.create", params: { root: summary.root, display_name: summary.display_name },
-    }]]);
+  it("binds Apply and Discard to the original project/run", async () => {
+    invoke.mockResolvedValue({ok: true, value: {operation_id: "operation"}});
+    await bridge.runAction(project, "run", "apply");
+    expect(invoke).toHaveBeenLastCalledWith("workspace_request", {method: "gui.run.action", params: {project, run_id: "run", action: "apply", summary: ""}});
+    await bridge.runAction(project, "run", "discard", "Retained outcome");
+    expect(invoke).toHaveBeenLastCalledWith("workspace_request", {method: "gui.run.action", params: {project, run_id: "run", action: "discard", summary: "Retained outcome"}});
   });
-
-  it.each(["INVALID_INPUT", "CONFLICT", "ACCESS_DENIED", "REGISTRY_INCOMPLETE", "STATE_UNAVAILABLE"] as const)(
-    "retains the bounded %s recovery outcome", async (creationCode) => {
-      invoke.mockRejectedValueOnce(`PROJECT_CREATE_${creationCode}`);
-      await expect(bridge.createProject("C:\\project", "Name")).rejects.toMatchObject({
-        name: "ProjectCreationError", creationCode,
-      });
-      expect(invoke).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it("keeps a lost response unconfirmed without retrying or exposing native details", async () => {
-    invoke.mockRejectedValueOnce("private native diagnostic");
-    const error = await bridge.createProject("C:\\project", "Name").catch((failure) => failure);
-    expect(error).toBeInstanceOf(ProjectCreationError);
-    expect(error.creationCode).toBe("UNCONFIRMED");
-    expect(error.message).not.toContain("private native diagnostic");
-    invoke.mockResolvedValueOnce({ projects: [], next_offset: null });
-    await bridge.projects(0);
-    expect(invoke.mock.calls.map(([, args]) => args.method)).toEqual(["project.create", "projects.list"]);
+  it("uses conversation identity/cursor and retains separate Update finish", async () => {
+    invoke.mockResolvedValue({ok: true, value: {}});
+    await bridge.output("conversation-A", "run-A", 3);
+    expect(invoke).toHaveBeenLastCalledWith("workspace_request", {method: "gui.conversation.output", params: {conversation_id: "conversation-A", run_id: "run-A", cursor: 3}});
+    await bridge.updateFinish("a".repeat(32));
+    expect(invoke).toHaveBeenLastCalledWith("finish_update", {operationId: "a".repeat(32)});
   });
 });

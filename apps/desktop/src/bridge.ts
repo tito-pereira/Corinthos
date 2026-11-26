@@ -1,546 +1,65 @@
-// SPDX-License-Identifier: MPL-2.0
+﻿// SPDX-License-Identifier: MPL-2.0
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-export interface ProviderStatus {
-  provider: string;
-  supported: boolean;
-  configuration: "operational" | "initial" | "global" | "default";
-  executable: string | null;
-  observation: "OBSERVED" | "NOT_OBSERVED" | "UNKNOWN";
-  capabilities: {
-    available: boolean;
-    version: string | null;
-    json_events: boolean;
-    stdin_prompt: boolean;
-    native_resume: boolean;
-    read_only: boolean;
-  } | null;
+export interface ProjectRef { root: string; project_id: string; workspace_format: number; name: string; description: string; import_source?: string | null }
+export interface ProviderStatus { provider: string; available: boolean; command: string[] }
+export interface RunRef { run_id: string; project_id: string }
+export interface GuiOperation {
+  operation_id: string; kind: "create" | "import" | "conversation" | "execute" | "action";
+  status: "STARTING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
+  phase: string; project: ProjectRef | null; run: RunRef | null;
+  message?: string; error?: string; cancel_requested?: boolean;
+  result?: { message?: string; applied_count?: number; integrated_paths?: string[]; discarded?: string; cancelled?: string };
 }
-
-export interface ProjectStatus {
-  root: string;
-  exists: boolean;
-  is_directory: boolean;
-  initialized: boolean;
-  storage: "ABSENT" | "CURRENT" | "LEGACY" | "INVALID" | "UNVERIFIED";
-  schema_version: number | null;
-}
-
-export interface ProjectInspection {
-  root: string;
-  status: "CURRENT" | "MIGRATION_REQUIRED" | "UNMANAGED" | "INCOMPLETE_IMPORT" | "INVALID" | "UNVERIFIED" | "MISSING" | "UNAVAILABLE";
-  reason: string;
-  can_import: boolean;
-  schema_version: number | null;
-  inspection_digest: string | null;
-}
-
-export interface ProjectEntry {
-  root: string;
-  display_name: string;
-  last_accessed_at: string | null;
-  availability: "AVAILABLE" | "MISSING" | "UNAVAILABLE";
-  initialized: boolean;
-  storage: ProjectStatus["storage"];
-  schema_version: number | null;
-}
-
-export interface ProjectSummary extends ProjectStatus {
-  display_name: string;
-  active_project: ContractReference | null;
-  active_workflow: ContractReference | null;
-  work_items: {
-    total: number;
-    by_status: Record<string, number>;
-    by_scope: Record<string, number>;
-  } | null;
-}
-
-interface ImportAmbiguity {
-  code: string;
-  explanation: string;
-  required: boolean;
-  options: string[];
-}
-
-export interface ImportDiscovery {
-  root: string;
-  label: "DISCOVERED";
-  object_format: "sha1" | "sha256";
-  head: string | null;
-  branch: string | null;
-  dirty: boolean;
-  commit_allowed: boolean;
-  existing_state: boolean;
-  tracked_count: number;
-  languages: Record<string, number>;
-  manifests: { path: string; ecosystem: string }[];
-  docs: string[];
-  tests: string[];
-  candidates: { path: string; ecosystem: string }[];
-  exclusions: string[];
-  ambiguities: ImportAmbiguity[];
-  discovery_digest: string;
-}
-
-export type ImportResult = {
-  root: string;
-  status: "IMPORTED";
-  label: "CONFIRMED";
-  project_id: string;
-  snapshot_digest: string;
-  discovery_digest: string;
-  error: string | null;
-} | {
-  root: string;
-  status: "REJECTED" | "ALREADY_MANAGED" | "INVALID" | "INCOMPLETE" | "NOT_IMPORTED";
-  error: string | null;
-};
-
-export interface ContractReference {
-  contract_id: string;
-  revision_id: string;
-}
-
-export interface WorkItem {
-  work_item_id: string;
-  parent_work_item_id: string | null;
-  objective: string;
-  scope_level: string;
-  status: string;
-  updated_at: string;
-  allowed_transitions: string[];
-  acceptance_criteria?: string[];
-}
-
-export interface WorkNode extends Omit<WorkItem, "updated_at" | "allowed_transitions"> {
-  depth: number;
-}
-
-export const workScopes = ["TASK", "CHANGE", "PROJECT", "CRITICAL"] as const;
-export type WorkScope = typeof workScopes[number];
-
-export interface ScopeAssessment {
-  work_item_id: string;
-  selected_scope: WorkScope;
-  recommended_scope: WorkScope;
-  minimum_required_scope: WorkScope;
-  policy_version: number | string;
-  signals: string[];
-  unknowns: string[];
-}
-
-export interface FlowView extends ScopeAssessment {
-  flow_kind: WorkScope;
-  stage: string;
-  gates: { id: string; state: string }[];
-  blockers: string[];
-  next_actions: string[];
-  validation_state: string;
-  validation_policy: string | null;
-  validation_result_refs?: ContractReference[];
-  workflow_ref: ContractReference | null;
-  execution: { execution_id: string; state: string } | null;
-  latest_session: { session_id: string; provider: string; state: string; run_generation: number } | null;
-  latest_projection: { projection_id: string; projection_digest: string } | null;
-  latest_handoff: { handoff_id: string; digest: string } | null;
-  provider_continuity: { source_provider: string; target_provider: string; handoff_id: string } | null;
-  report_status: string;
-  can_start: boolean;
-  can_complete: boolean;
-}
-
-export interface WorkReport {
-  work_item_id: string;
-  flow: FlowView;
-  objective: string;
-  acceptance_criteria: string[];
-  overall_status: string;
-}
-
-export type ProjectTab = "overview" | "work" | "agents" | "context" | "validation";
-
-export interface ProjectTarget {
-  tab: ProjectTab;
-  id?: string;
-  handoff?: boolean;
-  review?: "PROJECT" | "WORKFLOW";
-}
-
-export interface CommandSession {
-  project_id: string;
-  session_id: string;
-  work_item_id: string;
-  provider: string;
-  state: string;
-  run_generation: number;
-  cleanup_unconfirmed: boolean;
-  context_projection_id: string | null;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  cached_tokens: number | null;
-  reported_cost: string | null;
-  reported_cost_currency: string | null;
-}
-
-export interface CommandFocus {
-  project_id: string;
-  work_item_id: string;
-  objective: string;
-  status: string;
-  scope_level: string;
-  stage: string | null;
-  blockers: string[];
-  next_actions: string[];
-  validation_state: string;
-  validation_result_refs: ContractReference[];
-  latest_session: { session_id: string; provider: string; state: string } | null;
-  latest_projection: { projection_id: string; projection_digest: string } | null;
-  provider_continuity: FlowView["provider_continuity"];
-}
-
-export interface CommandAttention {
-  kind: string;
-  severity: "INFO" | "ACTION" | "BLOCKED";
-  owner_type: string;
-  owner_id: string | null;
-  reason_code: string;
-  summary: string;
-  navigation: "OVERVIEW" | "WORK" | "AGENTS" | "CONTEXT" | "VALIDATION";
-  action_ids: string[];
-}
-
-export interface CommandValidation {
-  state: "NOT_VERIFIED" | "VERIFIED" | "BLOCKED";
-  latest_run: { run_id: string; state: string; plan: ContractReference; result: ContractReference | null; plan_is_active: boolean } | null;
-  active_plan_refs: ContractReference[];
-  outcome: string | null;
-}
-
-export interface CommandProjectCard extends ProjectEntry {
-  project_id: string | null;
-  error: string | null;
-  active_project: ContractReference | null;
-  active_workflow: ContractReference | null;
-  import_status: "IMPORTED" | "INCOMPLETE" | "INVALID" | null;
-  external_import: { snapshot_digest: string; summary: { object_format?: string; branch?: string | null; tracked_count?: number } } | null;
-  work_counts: ProjectSummary["work_items"];
-  focus_work_items: CommandFocus[];
-  sessions: { active: CommandSession | null; latest_terminal: CommandSession | null; total: number } | null;
-  validation: CommandValidation;
-  latest_context: { projection_id: string; projection_digest: string; work_item_id: string; provider: string } | null;
-  lifecycle: { tracker_id: string; enabled: boolean; active_build_id: string | null; pending_build_id: string | null } | null;
-  attention: CommandAttention[];
-}
-
-export interface ReviewSummary {
-  kind: "PROJECT" | "WORKFLOW";
-  session_id: string;
-  project_id: string;
-  state: string;
-  version: number;
-  digest: string | null;
-  expires_at: number | null;
-}
-
-export interface ReviewDetails {
-  review: ReviewSummary;
-  presentation: string | null;
-  approve_command: string | null;
-  can_defer: boolean;
-  redactions: string[];
-}
-
-interface WorkInput {
-  objective: string;
-  scope_level: string;
-  acceptance_criteria: string[];
-  parent_work_item_id?: string;
-}
-
-export interface AgentSession {
-  session_id: string;
-  work_item_id: string;
-  project_id: string;
-  provider: string;
-  provider_version: string | null;
-  model: string | null;
-  state: string;
-  run_generation: number;
-  created_at: string;
-  updated_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  cached_tokens: number | null;
-  duration_ms: number | null;
-  reported_cost: string | null;
-  reported_cost_currency: string | null;
-  timeout_seconds: number;
-  read_only: boolean;
-  can_cancel: boolean;
-  can_recover: boolean;
-  cleanup_unconfirmed: boolean;
-}
-
-export interface SessionEvent {
-  sequence: number;
-  kind: string;
-  occurred_at: string;
-  payload: Record<string, unknown>;
-  native_kind: string | null;
-  session_id: string;
-}
-
-interface SessionStart {
-  provider: string;
-  work_item_id: string;
-  timeout_seconds: number;
-  read_only: boolean;
-  instruction?: string;
-}
-
-export interface ContextProjection {
-  projection_id: string;
-  project_id: string;
-  work_item_id: string;
-  target_provider: string;
-  selector_policy_version: number;
-  redaction_policy_version: number;
-  projection_digest: string;
-  source_set_digest: string;
-  created_at: string;
-}
-
-export interface ContextSource {
-  ordinal: number;
-  kind: string;
-  authority: "CANONICAL" | "OPERATIONAL" | "DERIVED";
-  identity: string;
-  revision: string | null;
-  digest: string;
-  reason: string;
-  redaction: string[];
-}
-
-export interface SessionHandoff {
-  handoff_id: string;
-  project_id: string;
-  work_item_id: string;
-  source_session_id: string;
-  run_generation: number;
-  event_cutoff: number;
-  provider: string;
-  terminal_state: string;
-  digest: string;
-  created_at: string;
-}
-
-export interface SwitchView {
-  switch_key: string;
-  project_id: string;
-  work_item_id: string;
-  source_session_id: string;
-  source_provider: string;
-  source_generation: number;
-  source_state: string;
-  cleanup_unconfirmed: boolean;
-  target_provider: string;
-  stage: "SOURCE_ACTIVE" | "STOPPING_SOURCE" | "SOURCE_TERMINAL" | "HANDOFF_READY" |
-    "PROJECTION_READY" | "TARGET_SESSION_ACTIVE" | "TARGET_SESSION_TERMINAL" | "BLOCKED";
-  handoff_id: string | null;
-  handoff_digest: string | null;
-  projection_id: string | null;
-  projection_digest: string | null;
-  target_session_id: string | null;
-  target_state: string | null;
-  blocker: string | null;
-}
-
-let pending: Promise<unknown> = Promise.resolve();
-
+export interface ChatMessage { role: "user" | "assistant"; text: string; status?: string; error?: string; operation_id?: string; run_id?: string; truncated?: boolean }
+export interface Conversation { conversation_id: string; kind: "main" | "project"; project: ProjectRef | null; messages: ChatMessage[]; omitted: number }
+export interface RunStatus { run_id: string; status: GuiOperation["status"]; integrated: boolean; error: string | null; output_tail?: string }
 export interface ProductUpdateStatus {
-  operation_id: string | null;
-  installed_version: string;
-  candidate_version: string | null;
-  phase: "IDLE" | "UNSUPPORTED" | "CHECKING" | "AVAILABLE" | "NO_UPDATE" | "STAGING" |
-    "READY" | "WAITING_FOR_EXIT" | "INSTALLING" | "SUCCEEDED" | "ROLLED_BACK" |
-    "RECOVERY_REQUIRED" | "FAILED" | "BUSY";
-  progress: number;
-  message: string;
-  error: { code: string; message: string } | null;
-  can_start: boolean;
-  can_finish: boolean;
+  operation_id: string | null; installed_version: string; candidate_version: string | null;
+  phase: "IDLE" | "UNSUPPORTED" | "CHECKING" | "AVAILABLE" | "NO_UPDATE" | "STAGING" | "READY" | "WAITING_FOR_EXIT" | "INSTALLING" | "SUCCEEDED" | "ROLLED_BACK" | "RECOVERY_REQUIRED" | "FAILED" | "BUSY";
+  progress: number; message: string; error: { code: string; message: string } | null; can_start: boolean; can_finish: boolean;
 }
-
-const creationMessages = {
-  INVALID_INPUT: "Check the project name and absolute local directory.",
-  CONFLICT: "Project creation conflicts with existing state or a different project name.",
-  ACCESS_DENIED: "Corinthos cannot access the selected directory. Check its permissions.",
-  REGISTRY_INCOMPLETE: "The project was initialized, but registration did not finish. Retry with the same name and directory.",
-  STATE_UNAVAILABLE: "The project state could not be verified. Preserve it and inspect the selected directory.",
-  UNCONFIRMED: "Project creation could not be confirmed. Reconnect, inspect the directory, and retry with the same name and location.",
-};
-
-export type ProjectCreationCode = keyof typeof creationMessages;
-
-export class ProjectCreationError extends Error {
-  constructor(readonly creationCode: ProjectCreationCode) {
-    super(creationMessages[creationCode]);
-    this.name = "ProjectCreationError";
-  }
-}
-
-function request<T>(method: string, params: object) {
-  const reply = pending.then(() => invoke<T>("workspace_request", { method, params }));
-  pending = reply.catch(() => undefined);
-  return reply;
-}
-
-export interface DesktopIdentity {
-  version: string;
-  identifier: string;
-}
-
-export interface RuntimeDiagnostics {
-  python_implementation: string;
-  python_version: string;
-  supported_schema_version: number;
-}
-
-export type BackendSnapshot = {
-  desktop: DesktopIdentity;
-} & (
-  | {
-      connection: "ready";
-      handshake: { protocol_version: number; version: string; methods: string[] };
-      providers: { providers: ProviderStatus[] };
-    }
-  | {
-      connection: "disconnected" | "unavailable";
-      error?: string;
-      failure_origin?: "startup" | "transport" | "busy" | "closing" | "bridge";
-    }
+export type BackendSnapshot = { desktop: { version: string; identifier: string } } & (
+  { connection: "ready"; handshake: { protocol_version: number; version: string; methods: string[] }; providers: { providers: ProviderStatus[] } } |
+  { connection: "unavailable" | "disconnected"; error?: string; failure_origin?: string }
 );
-
+let pending: Promise<unknown> = Promise.resolve();
+function request<T>(method: string, params: object): Promise<T> {
+  const result = pending.then(() => invoke<T>("workspace_request", { method, params }));
+  pending = result.catch(() => undefined);
+  return result;
+}
+async function gui<T>(method: string, params: object): Promise<T> {
+  const reply = await request<{ ok: boolean; value: T; error?: string }>(method, params);
+  if (!reply.ok) throw new Error(reply.error || "The requested operation could not be completed.");
+  return reply.value;
+}
 export const bridge = {
-  selectProjectDirectory: () => invoke<string | null>("select_project_directory"),
   snapshot: () => invoke<BackendSnapshot>("backend_snapshot"),
-  diagnostics: () => request<RuntimeDiagnostics>("system.diagnostics", {}),
-  projects: (offset: number) =>
-    request<{ projects: ProjectEntry[]; next_offset: number | null }>("projects.list", { offset }),
-  project: (root: string, open: boolean) =>
-    request<ProjectSummary>(open ? "project.open" : "project.summary", { root }),
-  inspectProject: (root: string) => request<ProjectInspection>("project.inspect", { root }),
-  openInspectedProject: (root: string, inspectionDigest: string, migrate = false) =>
-    request<ProjectSummary>("project.open_checked", { root, inspection_digest: inspectionDigest, migrate }),
-  createProject: async (root: string, displayName: string): Promise<ProjectSummary> => {
-    try {
-      return await request<ProjectSummary>("project.create", { root, display_name: displayName });
-    } catch (error) {
-      const code = typeof error === "string" && error.startsWith("PROJECT_CREATE_")
-        ? error.slice("PROJECT_CREATE_".length) : "UNCONFIRMED";
-      throw new ProjectCreationError(Object.hasOwn(creationMessages, code)
-        ? code as ProjectCreationCode : "UNCONFIRMED");
-    }
-  },
-  commandOverview: (offset: number) =>
-    request<{ projects: CommandProjectCard[]; next_offset: number | null }>("command.overview", { offset }),
-  commandProject: (root: string) => request<CommandProjectCard>("command.project", { root }),
-  reviews: (root: string, offset: number) =>
-    request<{ reviews: ReviewSummary[]; next_offset: number | null }>("review.list", { root, offset }),
-  reviewGet: (root: string, kind: ReviewSummary["kind"], session_id: string) =>
-    request<ReviewDetails>("review.get", { root, kind, session_id }),
-  reviewDefer: (root: string, review: ReviewSummary & { digest: string }) =>
-    request<ReviewSummary>("review.defer", {
-      root, kind: review.kind, session_id: review.session_id, version: review.version, digest: review.digest,
-    }),
-  settingsProviders: (root?: string) => request<ProviderStatus[]>("settings.providers", root ? { root } : {}),
+  restart: () => invoke<BackendSnapshot>("restart_backend"),
+  selectProjectDirectory: () => invoke<string | null>("select_project_directory"),
+  projects: () => gui<{projects: (ProjectRef & { available: boolean })[]; base: string}>("gui.projects", {}),
+  createProject: (name: string, description: string, provider: string) => gui<GuiOperation>("gui.create", { name, description, provider }),
+  openProject: (path: string) => gui<ProjectRef>("gui.open", { path }),
+  importProject: (path: string) => gui<{project?: ProjectRef; operation?: GuiOperation}>("gui.import", { path }),
+  operation: (operation_id: string) => gui<GuiOperation>("gui.operation.get", { operation_id }),
+  cancelOperation: (operation_id: string) => gui<GuiOperation>("gui.operation.cancel", { operation_id }),
+  conversation: (project: ProjectRef | null) => gui<Conversation>("gui.conversation.open", { project }),
+  conversationGet: (conversation_id: string) => gui<Conversation>("gui.conversation.get", { conversation_id }),
+  send: (conversation_id: string, message: string, provider: string) => gui<GuiOperation>("gui.conversation.send", { conversation_id, message, provider }),
+  output: (conversation_id: string, run_id: string, cursor: number) => gui<{text: string; cursor: number; complete: boolean}>("gui.conversation.output", { conversation_id, run_id, cursor }),
+  summary: (project: ProjectRef, kind: "ideas" | "tasks") => gui<{kind: string; empty: boolean; items: string[]}>("gui.summary", { project, kind }),
+  execute: (project: ProjectRef, provider: string) => gui<{empty: boolean; message?: string; operation?: GuiOperation}>("gui.execute", { project, provider }),
+  run: (project: ProjectRef, run_id: string) => gui<RunStatus>("gui.run.get", { project, run_id }),
+  runs: (project: ProjectRef) => gui<{runs: (RunStatus & {skill: string})[]}>("gui.runs", { project }),
+  runAction: (project: ProjectRef, run_id: string, action: "apply" | "discard" | "cancel", summary = "") => gui<GuiOperation>("gui.run.action", { project, run_id, action, summary }),
+  providerConfigure: (provider: string, command: string[]) => gui<{providers: ProviderStatus[]}>("gui.provider.configure", { provider, command }),
   updateCheck: () => request<ProductUpdateStatus>("update.check", {}),
   updateStart: (operation_id: string) => request<ProductUpdateStatus>("update.start", { operation_id }),
-  updateStatus: (operation_id?: string) =>
-    request<ProductUpdateStatus>("update.status", operation_id ? { operation_id } : {}),
+  updateStatus: (operation_id?: string) => request<ProductUpdateStatus>("update.status", operation_id ? { operation_id } : {}),
   updateFinish: (operationId: string) => invoke<ProductUpdateStatus>("finish_update", { operationId }),
-  providersRefresh: () => request<ProviderStatus[]>("providers.refresh", {}),
-  providerConfigure: (provider: string, executable: string, root?: string) =>
-    request<ProviderStatus[]>("provider.configure", { provider, executable, ...(root ? { root } : {}) }),
-  providerReset: (provider: string, root?: string) =>
-    request<ProviderStatus[]>("provider.reset", { provider, ...(root ? { root } : {}) }),
-  importInspect: (root: string) => request<ImportDiscovery>("import.inspect", { root }),
-  importStatus: (root: string) => request<ImportResult>("import.status", { root }),
-  importCommit: (root: string, discovery_digest: string, confirmations: string[]) =>
-    request<ImportResult>("import.commit", { root, discovery_digest, confirmations }),
-  workTree: (root: string, offset: number) =>
-    request<{ nodes: WorkNode[]; next_offset: number | null }>("work.tree", { root, offset }),
-  workGet: (root: string, work_item_id: string) => request<WorkItem>("work.get", { root, work_item_id }),
-  workCreate: (root: string, input: WorkInput) => request<WorkItem>("work.create", { root, ...input }),
-  workStatus: (root: string, item: WorkItem, status: string) =>
-    request<WorkItem>("work.status", {
-      root,
-      work_item_id: item.work_item_id,
-      expected_updated_at: item.updated_at,
-      status,
-    }),
-  scopeSet: (root: string, item: WorkItem, scope_level: WorkScope, confirm_downgrade: boolean) =>
-    request<ScopeAssessment & { updated_at: string }>("scope.set", {
-      root, work_item_id: item.work_item_id, expected_updated_at: item.updated_at, scope_level, confirm_downgrade,
-    }),
-  flowStatus: (root: string, work_item_id: string) =>
-    request<FlowView>("flow.status", { root, work_item_id }),
-  flowStart: (root: string, work_item_id: string, options: Omit<SessionStart, "work_item_id">) =>
-    request<FlowView>("flow.start", { root, work_item_id, ...options }),
-  flowComplete: (root: string, item: WorkItem) =>
-    request<FlowView>("flow.complete", {
-      root, work_item_id: item.work_item_id, expected_updated_at: item.updated_at,
-    }),
-  workReport: (root: string, work_item_id: string) =>
-    request<WorkReport>("work.report", { root, work_item_id }),
-  sessions: (root: string, offset: number) =>
-    request<{ sessions: AgentSession[]; next_offset: number | null }>("session.list", { root, offset }),
-  sessionGet: (root: string, session_id: string) =>
-    request<AgentSession>("session.get", { root, session_id }),
-  sessionEvents: (root: string, session_id: string, after_sequence: number, limit: number) =>
-    request<{ events: SessionEvent[]; next_after_sequence: number }>("session.events", { root, session_id, after_sequence, limit }),
-  sessionStart: (root: string, input: SessionStart) =>
-    request<AgentSession>("session.start", { root, ...input }),
-  sessionCancel: (root: string, session_id: string, generation: number) =>
-    request<AgentSession>("session.cancel", { root, session_id, generation }),
-  sessionRecover: (root: string, session_id: string, instruction?: string) =>
-    request<AgentSession>("session.recover", { root, session_id, ...(instruction ? { instruction } : {}) }),
-  projections: (root: string, offset: number, work_item_id?: string) =>
-    request<{ projections: ContextProjection[]; next_offset: number | null }>("context.list", {
-      root, offset, ...(work_item_id ? { work_item_id } : {}),
-    }),
-  contextCreate: (root: string, work_item_id: string, provider: string) =>
-    request<ContextProjection>("context.create", { root, work_item_id, provider }),
-  contextGet: (root: string, projection_id: string) =>
-    request<ContextProjection>("context.get", { root, projection_id }),
-  contextVerify: (root: string, projection_id: string) =>
-    request<ContextProjection & { verified: boolean }>("context.verify", { root, projection_id }),
-  contextSources: (root: string, projection_id: string, offset: number) =>
-    request<{ sources: ContextSource[]; next_offset: number | null }>("context.sources", { root, projection_id, offset }),
-  contextForSession: (root: string, session_id: string) =>
-    request<{ projection: ContextProjection | null }>("context.for_session", { root, session_id }),
-  handoffs: (root: string, offset: number, work_item_id?: string) =>
-    request<{ handoffs: SessionHandoff[]; next_offset: number | null }>("handoff.list", {
-      root, offset, ...(work_item_id ? { work_item_id } : {}),
-    }),
-  handoffCreate: (root: string, session_id: string) =>
-    request<SessionHandoff>("handoff.create", { root, session_id }),
-  handoffGet: (root: string, handoff_id: string) =>
-    request<SessionHandoff>("handoff.get", { root, handoff_id }),
-
-  switchStatus: (root: string, source_session_id: string, target_provider: string, source_generation: number) =>
-    request<SwitchView>("switch.status", { root, source_session_id, target_provider, source_generation }),
-  switchExecute: (root: string, source_session_id: string, target_provider: string, source_generation: number) =>
-    request<SwitchView>("switch.execute", { root, source_session_id, target_provider, source_generation }),
-  restart: () => invoke<BackendSnapshot>("restart_backend"),
-  onDisconnect: (handler: () => void) =>
-    listen<{ method: string }>("backend-lifecycle", ({ payload }) => {
-      if (payload.method === "backend.disconnected" || payload.method === "system.stopping") {
-        handler();
-      }
-    }),
+  onDisconnect: (handler: () => void) => listen<{method: string}>("backend-lifecycle", ({payload}) => {
+    if (payload.method === "backend.disconnected" || payload.method === "system.stopping") handler();
+  }),
 };

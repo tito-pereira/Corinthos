@@ -2,10 +2,11 @@
 """Explicit operations; no built-in development stages or project governance."""
 
 import inspect
+import json
 import platform
 from pathlib import Path
 
-from corinthos import __version__, continuity, providers, runtime, updater, workspace
+from corinthos import __version__, continuity, gui, providers, runtime, updater, workspace
 from corinthos.errors import IntegrityError
 from corinthos.skills import list_skills, show_skill
 from corinthos.user_state import read_state, update_state
@@ -23,7 +24,15 @@ def _remember(project):
     def transform(value):
         rows = value.get("projects", [])
         rows = [row for row in rows if isinstance(row, dict) and row.get("root") != project["root"]]
-        return {"version": 1, "projects": [project, *rows][:64]}
+        hint = {
+            key: project[key]
+            for key in ("root", "project_id", "workspace_format", "name")
+            if key in project
+        }
+        result = {"version": 1, "projects": [hint, *rows][:64]}
+        while len(json.dumps(result).encode()) > 120000:
+            result["projects"].pop()
+        return result
 
     update_state("recent-projects.json", {"version": 1, "projects": []}, transform)
     return project
@@ -42,7 +51,7 @@ def diagnostics():
         "python_implementation": platform.python_implementation(),
         "python_version": platform.python_version(),
         "workspace_format": workspace.WORKSPACE_FORMAT,
-        "gui_engine_views": "DEFERRED",
+        "gui_pages": ["main", "project"],
     }
 
 
@@ -70,6 +79,25 @@ OPERATIONS = {
     "update.start": updater.update_start,
     "update.status": updater.update_status,
     "update.finish": updater.update_finish,
+    "gui.projects": gui.projects,
+    "gui.create": gui.create,
+    "gui.open": gui.open_selected,
+    "gui.import": gui.import_selected,
+    "gui.operation.get": gui.operation_get,
+    "gui.operation.cancel": gui.operation_cancel,
+    "gui.conversation.open": gui.conversation_open,
+    "gui.conversation.get": gui.conversation_get,
+    "gui.conversation.send": gui.conversation_send,
+    "gui.conversation.output": gui.conversation_output,
+    "gui.summary": gui.summary,
+    "gui.execute": gui.execute_tasks,
+    "gui.run.action": gui.run_action,
+    "gui.run.get": gui.run_get,
+    "gui.runs": gui.runs,
+    "gui.provider.configure": lambda provider, command: (
+        providers.configure_provider(provider, command),
+        {"providers": providers.show_providers()},
+    )[1],
 }
 
 
@@ -87,4 +115,9 @@ def invoke(method, params):
         if not isinstance(params["root"], str) or not params["root"] or len(params["root"]) > 4096:
             raise IntegrityError("Supply a bounded explicit project root.")
         params = {**params, "root": str(Path(params["root"]).absolute())}
+    if method.startswith("gui."):
+        try:
+            return {"ok": True, "value": operation(**params)}
+        except (IntegrityError, ValueError, OSError, RuntimeError) as error:
+            return {"ok": False, "error": str(error)[:2048]}
     return operation(**params)

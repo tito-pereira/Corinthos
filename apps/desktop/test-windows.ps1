@@ -37,7 +37,7 @@ try {
     $project = Join-Path $root 'project'
     $null = Invoke-PrivatePython $paths.Install @('-m', 'corinthos', 'project', 'init', '--root', $project)
     $null = Invoke-InstalledDesktopSmoke (Join-Path $paths.Install 'bin\corinthos-desktop.exe') $python $project
-    Write-Host 'Private-runtime packaging and shipping native transport/health passed. Engine GUI adaptation is deferred.'
+    Write-Host 'Private-runtime packaging and shipping native transport/health passed. GUI journey evidence is recorded separately.'
 } finally {
     $env:LOCALAPPDATA = $originalLocal
     if ([IO.Directory]::Exists($root)) {

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Project-bound local processes with isolated outputs and explicit integration."""
 
+import codecs
 import hashlib
 import os
 import re
@@ -90,9 +91,9 @@ def _alive(root, run):
         return True
 
 
-def list_runs(root):
+def list_runs(root, *, blocking=True):
     target = _directory(root)
-    with file_lock(target / "project.lock"):
+    with file_lock(target / "project.lock", blocking=blocking):
         runs = _read_runs(root)
         changed = False
         for run in runs.values():
@@ -108,9 +109,9 @@ def list_runs(root):
         return list(runs.values())
 
 
-def get(root, run_id):
+def get(root, run_id, *, blocking=True):
     target = _run_directory(root, run_id)
-    run = next((run for run in list_runs(root) if run["run_id"] == run_id), None)
+    run = next((run for run in list_runs(root, blocking=blocking) if run["run_id"] == run_id), None)
     if run is None:
         raise IntegrityError("Run not found in this project.")
     output = target / "output.txt"
@@ -120,6 +121,31 @@ def get(root, run_id):
             source.seek(max(0, output.stat().st_size - 4096))
             run = {**run, "output_tail": source.read(4096).decode("utf-8", errors="replace")}
     return run
+
+
+def output(root, run_id, cursor=0):
+    """Read only a selected run's bounded UTF-8 output, with a byte cursor."""
+    run = get(root, run_id)
+    if type(cursor) is not int or not 0 <= cursor <= 1024 * 1024:
+        raise IntegrityError("Supply a bounded output cursor.")
+    path = _run_directory(root, run_id) / "output.txt"
+    plain_path(path, file=True)
+    size = path.stat().st_size if path.exists() else 0
+    if cursor > size:
+        raise IntegrityError("Output cursor exceeds this run's output.")
+    data = b""
+    if size:
+        with path.open("rb") as source:
+            source.seek(cursor)
+            data = source.read(4096)
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    text = decoder.decode(data, final=run["status"] not in ACTIVE and cursor + len(data) >= size)
+    next_cursor = cursor + len(data) - len(decoder.getstate()[0])
+    return {
+        "text": text,
+        "cursor": next_cursor,
+        "complete": run["status"] not in ACTIVE and next_cursor >= size,
+    }
 
 
 def _owner_path(run_id):
@@ -342,6 +368,7 @@ def start(
     instruction="",
     claims=None,
     timeout=3600,
+    prepared_prompt=None,
 ):
     project = open_project(root)
     root = Path(project["root"])
@@ -349,7 +376,13 @@ def start(
     claims = _claims([] if claims is None else claims)
     if type(timeout) not in {int, float} or not 1 <= timeout <= 86400:
         raise IntegrityError("Timeout must be between 1 and 86400 seconds.")
-    prompt = build_prompt(root, skill, group=group, instruction=instruction)
+    prompt = (
+        prepared_prompt
+        if prepared_prompt is not None
+        else build_prompt(root, skill, group=group, instruction=instruction)
+    )
+    if not isinstance(prompt, str) or len(prompt.encode("utf-8")) > 262144:
+        raise IntegrityError("Prepared prompt exceeds its bounded UTF-8 limit.")
     run_id = uuid.uuid4().hex
     target = _run_directory(root, run_id)
     with file_lock(_directory(root) / "project.lock"):
@@ -368,12 +401,6 @@ def start(
         target.mkdir(parents=True)
         destination = target / "workspace"
         destination.mkdir()
-        try:
-            before = _snapshot(root, destination)
-        except BaseException:
-            shutil.rmtree(target)
-            raise
-        atomic_json(target / "baseline.json", before, max_bytes=2 * 1024 * 1024)
         (target / "prompt.txt").write_text(
             f"Isolated workspace root: {destination}\nUse this root for local commands; canonical integration is separate.\n"
             + prompt,
@@ -417,6 +444,17 @@ def start(
         _change(root, run_id, status="FAILED", error=str(error))
         raise
     return runs[run_id]
+
+
+def prepare(root, run_id):
+    """Prepare the admitted workspace in its owned worker, never the RPC thread."""
+    target = _run_directory(root, run_id)
+    run = get(root, run_id)
+    if (target / "cancel.json").exists():
+        return False
+    before = _snapshot(Path(run["root"]), Path(run["workspace"]))
+    atomic_json(target / "baseline.json", before, max_bytes=2 * 1024 * 1024)
+    return not (target / "cancel.json").exists()
 
 
 def cancel(root, run_id):

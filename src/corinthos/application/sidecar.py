@@ -33,9 +33,8 @@ _ERROR_MESSAGES = {
 
 
 class _RpcError(Exception):
-    def __init__(self, code, creation_code=None):
+    def __init__(self, code):
         self.code = code
-        self.creation_code = creation_code
 
 
 def _json_object(pairs):
@@ -144,14 +143,12 @@ def _dispatch(message, negotiated, *, health=False):
         raise _RpcError(-32002) from None
 
 
-def _error(code: int, request_id=None, creation_code: str | None = None) -> dict:
+def _error(code: int, request_id=None) -> dict:
     reply = {
         "jsonrpc": "2.0",
         "id": request_id,
         "error": {"code": code, "message": _ERROR_MESSAGES[code]},
     }
-    if creation_code is not None:
-        reply["error"]["data"] = {"creation_code": creation_code}
     return reply
 
 

@@ -8,7 +8,7 @@ function Find-ProductProcesses([string[]] $Executables) {
 }
 
 function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython, [string] $Project) {
-    # Engine screens are deferred. Exercise the shipping native health boundary without old RPCs.
+    # Exercise the shipping native health boundary; the interactive GUI journey is separate.
     Assert-PlainPath $Desktop
     Assert-PlainPath $PrivatePython
     $marker = Join-Path $Project 'context_agents\corinthos\state.json'
@@ -26,6 +26,6 @@ function Invoke-InstalledDesktopSmoke([string] $Desktop, [string] $PrivatePython
     $watch.Stop()
     Assert-Smoke (!(Find-ProductProcesses @($Desktop, $PrivatePython))) 'The health check left an owned desktop or sidecar process running.'
     Assert-Smoke ((Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash -eq $before) 'Desktop health changed project identity.'
-    Write-Host 'Shipping desktop verified its adjacent Python peer and reaped it; Engine-specific visual acceptance remains deferred.'
+    Write-Host 'Shipping desktop verified its adjacent Python peer and reaped it; visual GUI acceptance is recorded separately.'
     return $watch.ElapsedMilliseconds
 }

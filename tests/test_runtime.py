@@ -166,10 +166,12 @@ def test_clean_git_source_is_cloned_and_dirty_source_is_preserved(tmp_path):
     assert wait(root, run["run_id"])["status"] == "SUCCEEDED"
     assert (Path(run["workspace"]) / "repo/.git").is_dir()
     runtime.integrate(root, run["run_id"])
-    with pytest.raises(ConflictError, match="preserve"):
-        runtime.start(
-            root, "implement-feature", command=command("pass"), claims=["repo/source.txt"]
-        )
+    refused = runtime.start(
+        root, "implement-feature", command=command("pass"), claims=["repo/source.txt"]
+    )
+    failure = wait(root, refused["run_id"])
+    assert failure["status"] == "FAILED"
+    assert "preserve" in failure["error"]
     assert (repo / "source.txt").read_text() == "baseline"
 
 

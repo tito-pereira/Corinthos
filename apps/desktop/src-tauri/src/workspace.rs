@@ -7,6 +7,9 @@ const WORKSPACE_METHODS: &[&str] = &[
     "projects.list", "providers.status", "provider.configure", "skill.list", "skill.show",
     "skill.run", "run.get", "run.list", "run.cancel", "run.integrate", "run.discard",
     "continuity.show", "continuity.save", "cleanup", "update.check", "update.start", "update.status",
+    "gui.projects", "gui.create", "gui.open", "gui.import", "gui.operation.get", "gui.operation.cancel",
+    "gui.conversation.open", "gui.conversation.get", "gui.conversation.send", "gui.conversation.output",
+    "gui.summary", "gui.execute", "gui.run.action", "gui.run.get", "gui.runs", "gui.provider.configure",
 ];
 
 pub fn validate(method: &str, params: &Value) -> Result<(), &'static str> {
@@ -70,6 +73,9 @@ mod tests {
             assert!(validate(method, &json!({"root": root})).is_err(), "{method}");
         }
         assert!(validate("providers.status", &json!({})).is_ok());
+        for method in ["gui.projects", "gui.create", "gui.conversation.send", "gui.run.action", "gui.summary", "gui.execute"] {
+            assert!(validate(method, &json!({})).is_ok(), "{method}");
+        }
         assert!(validate("skill.list", &json!([])).is_err());
         assert!(validate("system.diagnostics", &json!({})).is_ok());
         assert!(validate("system.diagnostics", &json!({"extra": true})).is_err());

@@ -22,6 +22,22 @@ All project calls require an explicit `root`. Skill runs accept optional positiv
 
 Runs observe `STARTING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED` or `INTERRUPTED`. Status includes isolated workspace/output paths, original project/group, declared claims and error. On reconnect, owner locks distinguish live workers from interrupted records; a PID is not authority. Use explicit cancellation and wait for terminal state before cleanup/discard.
 
-Health mode exposes only handshake/version/shutdown and bypasses ordinary project/provider/runtime construction. Protocol 1 retains only the core method names; replacement project result shapes are not the deleted Engine schemas. Deferred old GUI views must not infer support from method names alone; the current shell gates on the replacement `skill.run` capability.
+Health mode exposes only handshake/version/shutdown and bypasses ordinary project/provider/runtime construction. Protocol 1 retains only the core method names; replacement project result shapes are not the deleted Engine schemas. The GUI binds only the advertised replacement operations; removed Engine result schemas are not reused.
 
-The native `workspace_request` allowlist admits the replacement operations and rejects removed Engine names. `update.finish` remains available only through its separate origin-checked native handoff. The current desktop uses retained shell/Update operations; screen bindings for skill/project commands remain deferred.
+The native `workspace_request` allowlist admits the replacement operations and rejects removed Engine names. `update.finish` remains available only through its separate origin-checked native handoff. The two-page desktop uses the `gui.*` interactions below and the retained Update operations.
+
+
+## Desktop interactions
+
+GUI operations return `{ok: true, value: ...}` or a bounded `{ok: false, error: ...}` result so application read/conflict failures remain actionable without exposing transport internals. Mutations still require JSON-RPC request IDs. Native admission lists every supported name explicitly.
+
+| Operations | Purpose |
+| --- | --- |
+| `gui.projects`, `gui.open`, `gui.import`, `gui.create` | Validated recent hints, enclosing-workspace selection, preserving working-copy import and actual skill-backed creation. |
+| `gui.operation.get`, `gui.operation.cancel` | Observe/cancel an opaque, scoped asynchronous request. Copy, provider, integration and publication work stays outside request handling. |
+| `gui.conversation.open/get/send/output` | Main or project scope, bounded transcript, real provider admission and cursor-based output chunks. |
+| `gui.summary`, `gui.execute` | Fresh read-only ideas/tasks; explicit local orchestrator dispatch or `No Tasks Yet`, including active-run deduplication. |
+| `gui.runs`, `gui.run.get/action` | Origin-bound retained runs and existing Apply/Discard/Cancel operations. Status reads fail promptly when integration owns the project lock. |
+| `gui.provider.configure` | Reuse the native executable/argument registry, without a separate authentication system. |
+
+Project references carry validated UUID/root metadata; conversations and run actions retain their originating scope across navigation. GUI replies and output chunks remain below the 65,536-byte transport frame. Scope validation never accepts an arbitrary output file path from the WebView. See the [GUI guide](gui.md) for behavior and limits.

@@ -39,7 +39,7 @@ corinthos run integrate --root <project> <run-id>
 
 Use your shell's quoting rules for the JSON array. Workers survive a CLI or desktop connection closing and hold the installed-runtime lease until their process trees are reaped. Inspect status/output and cancel explicitly. Independent claims can execute concurrently; overlapping active claims are rejected. Each run receives an isolated workspace. Integration checks all changed paths against its write scopes and original destination fingerprints before copying changes. Exit zero records process success; independent review and product acceptance remain distinct.
 
-Git-backed source must be clean before isolation; commit or separately preserve changes first. Provider processes are trusted local tools: isolation and ownership checks are coordination, not an operating-system security sandbox. Snapshots omit generated caches and are bounded to 10000 files/128 MiB. Output is bounded to 1 MiB and runs default to one hour. At most 64 retained runs per project are admitted; after retaining results, use `run discard --summary <outcome>` to remove terminal run artifacts.
+Snapshot preparation runs asynchronously; inspect the admitted run for preparation failures. Git-backed source must be clean before isolation; commit or separately preserve changes first. Provider processes are trusted local tools: isolation and ownership checks are coordination, not an operating-system security sandbox. Snapshots omit generated caches and are bounded to 10000 files/128 MiB. Output is bounded to 1 MiB and runs default to one hour. At most 64 retained runs per project are admitted; after retaining results, use `run discard --summary <outcome>` to remove terminal run artifacts.
 
 ## Continuity and cleanup
 
@@ -54,10 +54,12 @@ Cleanup saves the summary before removing temporary artifacts, preserves pending
 
 ## Desktop and verification
 
-The native shell, branding, bounded transport, health and signed Update remain. The desktop displays an explicit replacement-backend notice and Update. Previous Engine-specific screens require future GUI adaptation; use the replacement commands meanwhile. See [backend operations](docs/backend.md) and [architecture](docs/architecture.md).
+The Windows desktop has two pages: Main and Project. Main conversation is independent of remembered projects; Project conversation uses its workspace instructions, context and local skills. The left sidebar provides project creation/resumption/import or project ideas/tasks/execution, with Update anchored in its footer. The locally packaged temple/wordmark reference supplies the navy, silver, gold and cyan identity. See the [GUI guide](docs/gui.md).
+
+Creation invokes the real local `create-project` skill, retains name/description and publishes only successful owned staging. Unmanaged source import makes a disclosed independent working copy, preserving the original files and Git metadata. Project conversation/task results stay isolated until Apply Changes succeeds; Discard retains an outcome summary. See [backend operations](docs/backend.md) and [architecture](docs/architecture.md).
 
 ```text
-python -m pytest --basetemp build/test-temp
+python -m pytest
 python -m ruff check .
 python -m ruff format --check .
 ```

@@ -1,823 +1,345 @@
-// SPDX-License-Identifier: MPL-2.0
-import { useEffect, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from "react";
-import {
-  bridge,
-  ProjectCreationError,
-  type BackendSnapshot,
-  type ProjectEntry,
-  type ProjectInspection,
-  type ProjectStatus,
-  type ProjectSummary,
-  type ProjectTab,
-  type ProjectTarget,
-  type ProviderStatus,
-  type RuntimeDiagnostics,
-} from "./bridge";
-import { Agents } from "./Agents";
-import { BackendDiagnostics, connectionLabels, type ConnectionState } from "./BackendDiagnostics";
-import corinthosLogo from "./assets/branding/corinthos-logo.svg?no-inline";
-import corinthosSymbol from "./assets/branding/corinthos-symbol.svg?no-inline";
-import { Command } from "./Command";
-import { ContextAudit } from "./ContextAudit";
-import { DirectorySelection } from "./DirectorySelection";
-import { ProjectOverview, ProjectValidation } from "./ProjectDetail";
-import { RepositoryImport } from "./RepositoryImport";
-import { Providers, ProviderSettings } from "./ProviderSettings";
+﻿// SPDX-License-Identifier: MPL-2.0
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { bridge, type BackendSnapshot, type Conversation, type GuiOperation, type ProjectRef, type ProviderStatus, type RunStatus } from "./bridge";
+import { ConversationView } from "./ConversationView";
 import { ProductUpdate } from "./ProductUpdate";
-import { WorkItems } from "./WorkItems";
+import reference from "./assets/branding/corinthos-reference.png";
 
-type Screen = "Home" | "Command" | "Projects" | "Settings";
-type Onboarding = "create" | "open" | "import" | null;
-type ImportDraft = { path: string; uncertain: boolean };
-const screens: Screen[] = ["Home", "Command", "Projects", "Settings"];
+const active = (status?: string) => status === "STARTING" || status === "RUNNING";
+const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+type ModalState = null | "create" | "provider" | "update" | "ideas" | "tasks" | "discard";
+type Recent = ProjectRef & { available: boolean };
+type RunTarget = { project: ProjectRef; run_id: string };
 
-function ApplicationShell({ screen, navigate, disabled, connection, onReconnect, children }: {
-  screen: Screen;
-  navigate: (value: Screen) => void;
-  disabled: boolean;
-  connection: ConnectionState;
-  onReconnect: () => void;
-  children: ReactNode;
-}) {
-  return <div className="app-shell">
-    <aside className="app-sidebar" aria-label="Corinthos navigation">
-      <header className="masthead">
-        <h1><img className="brand-logo" src={corinthosLogo} alt="" />
-          <img className="brand-symbol" src={corinthosSymbol} alt="" />
-          <span className="visually-hidden">Corinthos</span></h1>
-      </header>
-      <nav className="primary-navigation" aria-label="Primary navigation">
-        {screens.map((name) => <button type="button" key={name} aria-current={screen === name ? "page" : undefined}
-          disabled={disabled} onClick={() => navigate(name)}>{name}</button>)}
-      </nav>
-      <div className="connection-control">
-        <span className={`connection ${connection}`} role="status">{connectionLabels[connection]}</span>
-        {(connection === "disconnected" || connection === "unavailable") &&
-          <button type="button" onClick={onReconnect}>Reconnect</button>}
-      </div>
-    </aside>
-    <main className="workspace-content">{children}</main>
-  </div>;
-}
-
-type CreationState = {
-  name: string;
-  root: string;
-  shown: boolean;
-  pending: boolean;
-  outcome: "draft" | "uncertain" | "failed" | "created";
-  error: string;
-  summary: ProjectSummary | null;
-};
-
-const storageLabels: Record<ProjectStatus["storage"], string> = {
-  ABSENT: "No database",
-  CURRENT: "Current",
-  LEGACY: "Older schema",
-  INVALID: "Invalid",
-  UNVERIFIED: "Unverified",
-};
-
-function storageText(project: Pick<ProjectStatus, "storage" | "schema_version">) {
-  const version = project.schema_version === null ? "" : ` · v${project.schema_version}`;
-  return storageLabels[project.storage] + version;
-}
-
-function ProjectFacts({ project }: { project: ProjectSummary }) {
-  return (
-    <div className="project-result" aria-live="polite">
-      <h3>{project.display_name}</h3>
-      <code>{project.root}</code>
-      <dl className="facts">
-        <div><dt>Path</dt><dd>{project.is_directory ? "Directory" : project.exists ? "Not a directory" : "Missing"}</dd></div>
-        <div><dt>Initialized</dt><dd>{project.initialized ? "Yes" : "No"}</dd></div>
-        <div><dt>Storage</dt><dd>{storageText(project)}</dd></div>
-        {project.active_project && (
-          <div><dt>Project Contract</dt><dd>{project.active_project.contract_id} · {project.active_project.revision_id}</dd></div>
-        )}
-        {project.active_workflow && (
-          <div><dt>Workflow</dt><dd>{project.active_workflow.contract_id} · {project.active_workflow.revision_id}</dd></div>
-        )}
-        {project.work_items && (
-          <div><dt>Work Items</dt><dd>{project.work_items.total}</dd></div>
-        )}
-      </dl>
-      {project.work_items && project.work_items.total > 0 && (
-        <dl className="facts">
-          {Object.entries(project.work_items.by_status).filter(([, count]) => count > 0).map(([status, count]) => (
-            <div key={status}><dt>{status}</dt><dd>{count}</dd></div>
-          ))}
-          {Object.entries(project.work_items.by_scope).filter(([, count]) => count > 0).map(([scope, count]) => (
-            <div key={scope}><dt>{scope}</dt><dd>{count}</dd></div>
-          ))}
-        </dl>
-      )}
-    </div>
-  );
-}
-
-function RegistryEntry({ entry, busy, inspect, open }: {
-  entry: ProjectEntry;
-  busy: boolean;
-  inspect: boolean;
-  open: (root: string, explicit: boolean) => void;
-}) {
-  const available = entry.availability === "AVAILABLE";
-  const label = available ? "Open" : "Inspect";
-  return (
-    <li>
-      <div className="section-heading">
-        <h3>{entry.display_name}</h3>
-        <span>{available ? storageText(entry) : entry.availability === "MISSING" ? "Missing" : "Unavailable"}</span>
-      </div>
-      <code>{entry.root}</code>
-      {available && <p>{entry.initialized ? "Initialized" : "Uninitialized"}</p>}
-      <button
-        type="button"
-        disabled={busy || (!available && !inspect)}
-        onClick={() => open(entry.root, available)}
-      >
-        {label} {entry.display_name}
-      </button>
-    </li>
-  );
-}
-
-function Workspace({ methods, providers, onProviders, creation, onCreation, onCreate, importDraft, onImportDraft,
-  screen, setScreen, view, setView, project, setProject, selectedWork, setSelectedWork, renderDiagnostics, renderShell }: {
-  methods: string[];
-  providers: ProviderStatus[];
-  onProviders: (value: ProviderStatus[]) => void;
-  creation: CreationState;
-  onCreation: (update: (value: CreationState) => CreationState) => void;
-  onCreate: () => Promise<ProjectSummary | null>;
-  importDraft: ImportDraft;
-  onImportDraft: (update: (value: ImportDraft) => ImportDraft) => void;
-  screen: Screen;
-  setScreen: Dispatch<SetStateAction<Screen>>;
-  view: ProjectTarget;
-  setView: Dispatch<SetStateAction<ProjectTarget>>;
-  project: ProjectSummary | null;
-  setProject: Dispatch<SetStateAction<ProjectSummary | null>>;
-  selectedWork: Record<string, string>;
-  setSelectedWork: Dispatch<SetStateAction<Record<string, string>>>;
-  renderDiagnostics: (projectCurrent: boolean) => ReactNode;
-  renderShell: (children: ReactNode, navigate: (value: Screen) => void, disabled: boolean) => ReactNode;
-}) {
-  const [flow, setFlow] = useState<Onboarding>(creation.shown ? "create" : importDraft.uncertain ? "import" : null);
-  const [openRoot, setOpenRoot] = useState("");
-  const root = flow === "create" ? creation.root : openRoot;
-  const [inspection, setInspection] = useState<ProjectInspection | null>(null);
-  const [importMutating, setImportMutating] = useState(false);
-  const [confirmedImport, setConfirmedImport] = useState<string | null>(null);
-  const [refreshingSelection, setRefreshingSelection] = useState(Boolean(project));
-  const projectRef = useRef(project);
-  projectRef.current = project;
-  const [registry, setRegistry] = useState<ProjectEntry[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
-  const [listError, setListError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [opening, setOpening] = useState(false);
-  const openingBusy = useRef(false);
-  const [pickerPending, setPickerPending] = useState(false);
-  const pickerBusy = useRef(false);
-  const [openError, setOpenError] = useState("");
-  const [creationFields, setCreationFields] = useState({ name: "", root: "" });
-  const [showPlanning, setShowPlanning] = useState(false);
-  const [commandVersion, setCommandVersion] = useState(0);
-  const openRequest = useRef(0);
-  const selectionRequest = useRef(0);
-  const navigation = useRef(0);
-  const mounted = useRef(true);
-  const canList = methods.includes("projects.list");
-  const canOpen = methods.includes("project.inspect") && methods.includes("project.open_checked");
-  const canCreate = methods.includes("project.create");
-  const canInspect = methods.includes("project.summary");
-  const canViewAgents = Boolean(project?.initialized && (project.schema_version ?? 0) >= 8 && methods.includes("session.list"));
-  const canAuditContext = Boolean(project?.initialized && (project.schema_version ?? 0) >= 9 && methods.includes("context.list"));
-  const canViewWork = Boolean(project?.initialized &&
-    (project.storage === "CURRENT" || project.storage === "ABSENT") && methods.includes("work.tree"));
-  const canViewValidation = Boolean(project?.initialized && methods.includes("command.project"));
-  const listRequest = useRef(0);
-
-  function pickingChanged(pending: boolean) {
-    pickerBusy.current = pending;
-    setPickerPending(pending);
-  }
-
-  async function loadProjects(target: number) {
-    if (!canList) return;
-    const current = ++listRequest.current;
-    setLoading(true);
-    setListError("");
-    try {
-      const result = await bridge.projects(target);
-      if (listRequest.current !== current) return;
-      setRegistry(result.projects);
-      setOffset(target);
-      setNextOffset(result.next_offset);
-    } catch {
-      if (listRequest.current === current) setListError("Could not load projects.");
-    } finally {
-      if (listRequest.current === current) setLoading(false);
+function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  const panel = useRef<HTMLElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const node = panel.current;
+    (node?.querySelector<HTMLElement>("input, textarea") || node?.querySelector<HTMLElement>("button"))?.focus();
+    function keys(event: KeyboardEvent) {
+      if (event.key === "Escape") { event.preventDefault(); close.current(); }
+      if (event.key === "Tab" && node) {
+        const controls = Array.from(node.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex='0']"));
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
     }
-  }
-
-  useEffect(() => {
-    void loadProjects(0);
-    return () => { listRequest.current += 1; };
-  }, [canList]);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; navigation.current += 1; };
+    document.addEventListener("keydown", keys);
+    return () => { document.removeEventListener("keydown", keys); previous?.focus(); };
   }, []);
-
-  async function refreshSelection() {
-    const path = projectRef.current?.root;
-    if (!path) return;
-    const current = ++selectionRequest.current;
-    const active = () => mounted.current && selectionRequest.current === current && projectRef.current?.root === path;
-    setRefreshingSelection(true);
-    setOpenError("");
-    if (!canInspect) {
-      setOpenError("Project details are unavailable in this backend.");
-      return;
-    }
-    try {
-      const result = await bridge.project(path, false);
-      if (active()) {
-        setProject(result);
-        setRefreshingSelection(false);
-      }
-    } catch {
-      if (active()) {
-        setOpenError("Could not refresh the selected project. Retry when it is available.");
-      }
-    }
-  }
-
-  useEffect(() => {
-    if (projectRef.current) void refreshSelection();
-  }, [canInspect]);
-
-  function changeScreen(value: Screen) {
-    if (!mounted.current || importMutating) return;
-    navigation.current += 1;
-    openRequest.current += 1;
-    openingBusy.current = false;
-    setOpening(false);
-    setInspection(null);
-    setScreen(value);
-  }
-
-  function chooseFlow(value: Onboarding, path?: string) {
-    if (!mounted.current || importMutating || pickerBusy.current || creation.pending) return;
-    navigation.current += 1;
-    openRequest.current += 1;
-    openingBusy.current = false;
-    setOpening(false);
-    setInspection(null);
-    setOpenError("");
-    setConfirmedImport(null);
-    setCreationFields({ name: "", root: "" });
-    onCreation((previous) => ({ ...previous, shown: value === "create", ...(value === "create" && path !== undefined ? { root: path } : {}) }));
-    if (value === "open" && path !== undefined) setOpenRoot(path);
-    if (value === "import" && path !== undefined) onImportDraft((previous) => ({ ...previous, path }));
-    setFlow(value);
-  }
-
-  async function openProject(path: string, explicit: boolean, target: ProjectTarget = { tab: "overview" }) {
-    if (!mounted.current || pickerBusy.current || openingBusy.current || !path.trim() || (explicit ? !canOpen : !canInspect)) return;
-    selectionRequest.current += 1;
-    openingBusy.current = true;
-    const request = ++openRequest.current;
-    navigation.current += 1;
-    const current = navigation.current;
-    const active = () => mounted.current && request === openRequest.current && current === navigation.current;
-    setOpening(true);
-    setOpenError("");
-    setInspection(null);
-    setProject(null);
-    setRefreshingSelection(false);
-    setView(target);
-    setScreen("Projects");
-    try {
-      let result: ProjectSummary;
-      if (explicit) {
-        setFlow("open");
-        setOpenRoot(path);
-        onCreation((previous) => ({ ...previous, shown: false }));
-        const inspected = await bridge.inspectProject(path);
-        if (!active()) return;
-        if (inspected.status !== "CURRENT" || !inspected.inspection_digest) {
-          setInspection(inspected);
-          return;
-        }
-        result = await bridge.openInspectedProject(inspected.root, inspected.inspection_digest);
-      } else result = await bridge.project(path, false);
-      if (!mounted.current) return;
-      if (explicit) {
-        setCommandVersion((value) => value + 1);
-        await loadProjects(0);
-      }
-      if (active()) {
-        setProject(result);
-        setFlow(null);
-      }
-    } catch {
-      if (active()) setOpenError(explicit
-        ? "Could not open this project. Inspect it again; its state may have changed or be unavailable."
-        : "Could not inspect this project. Retry from Projects or Command.");
-    } finally {
-      if (active()) { openingBusy.current = false; setOpening(false); }
-    }
-  }
-
-  async function migrateProject() {
-    if (!mounted.current || !inspection?.inspection_digest || inspection.status !== "MIGRATION_REQUIRED" || openingBusy.current || pickerBusy.current) return;
-    selectionRequest.current += 1;
-    openingBusy.current = true;
-    const selected = inspection;
-    const request = ++openRequest.current;
-    const current = navigation.current;
-    const active = () => mounted.current && request === openRequest.current && current === navigation.current;
-    setOpening(true);
-    setOpenError("");
-    setInspection(null);
-    try {
-      const result = await bridge.openInspectedProject(selected.root, selected.inspection_digest!, true);
-      if (!mounted.current) return;
-      setCommandVersion((value) => value + 1);
-      await loadProjects(0);
-      if (!active()) return;
-      setProject(result);
-      setRefreshingSelection(false);
-      setFlow(null);
-      setScreen("Projects");
-    } catch {
-      if (active()) setOpenError("Migration was not confirmed. Inspect the directory again before retrying.");
-    } finally {
-      if (active()) { openingBusy.current = false; setOpening(false); }
-    }
-  }
-
-  function navigate(path: string, target: ProjectTarget) {
-    if (!mounted.current) return;
-    if (target.tab === "work" && target.id) {
-      const workId = target.id;
-      setSelectedWork((previous) => ({ ...previous, [path]: workId }));
-    }
-    if (project?.root === path) {
-      navigation.current += 1;
-      setView(target);
-      setScreen("Projects");
-    } else {
-      void openProject(path, false, target);
-    }
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!mounted.current || pickerBusy.current) return;
-    if (flow === "open") {
-      if (opening || !canOpen) return;
-      void openProject(root, true);
-      return;
-    }
-    if (flow !== "create") return;
-    if (creation.pending || opening || !canCreate) return;
-    const fields = {
-      name: !creation.name.trim() ? "Enter a project name." :
-        Array.from(creation.name).length > 128 || /\p{C}/u.test(creation.name)
-          ? "Use at most 128 characters without control or unsupported characters." : "",
-      root: !root.trim() ? "Enter the project directory." :
-        !/^(?:[A-Za-z]:[\\/]|\/(?!\/))/.test(root) || /[\0\r\n]/.test(root)
-          ? "Enter an absolute local directory path." : "",
-    };
-    setCreationFields(fields);
-    if (fields.name || fields.root) return;
-    selectionRequest.current += 1;
-    const current = navigation.current;
-    void onCreate().then(async (result) => {
-      if (!result || !mounted.current) return;
-      setCommandVersion((value) => value + 1);
-      setFlow(null);
-      if (current === navigation.current) {
-        setProject(result);
-        setRefreshingSelection(false);
-        setView({ tab: "overview" });
-        setShowPlanning(false);
-        setScreen("Projects");
-      }
-      await loadProjects(0);
-    });
-  }
-
-  const handlesProjects = screen === "Home" || screen === "Projects";
-  const tabs: { tab: ProjectTab; label: string; enabled: boolean }[] = [
-    { tab: "overview", label: "Overview", enabled: true },
-    { tab: "work", label: "Work", enabled: canViewWork },
-    { tab: "agents", label: "Agents", enabled: canViewAgents },
-    { tab: "context", label: "Context", enabled: canAuditContext },
-    { tab: "validation", label: "Validation", enabled: canViewValidation },
-  ];
-  const activeTab = tabs.some((tab) => tab.enabled && view.tab === tab.tab) ? view.tab : "overview";
-  const activeWorkId = project ? selectedWork[project.root] ?? view.id : undefined;
-
-  return renderShell(
-    <>
-      {screen === "Command" && <Command key={commandVersion} methods={methods} open={navigate} />}
-      {screen === "Settings" && <>
-        {renderDiagnostics(!refreshingSelection)}
-        <ProductUpdate methods={methods} />
-        <ProviderSettings methods={methods} root={project?.root} providers={providers} onProviders={onProviders} />
-      </>}
-      {handlesProjects && <section aria-labelledby="projects-title">
-        <div className="section-heading">
-          <h2 id="projects-title">{screen === "Home" ? "Recent projects" : "Projects"}</h2>
-          {screen === "Home" && <button type="button" className="secondary" onClick={() => changeScreen("Command")}>Open Command</button>}
-        </div>
-        <div className="onboarding-choices" role="group" aria-label="Project onboarding">
-          <div><button type="button" disabled={!canCreate || opening || creation.pending || pickerPending || importMutating}
-            aria-pressed={flow === "create"} onClick={() => chooseFlow("create")}>Create new project</button>
-            <p>Name a project and prepare private Corinthos state while preserving existing files.</p></div>
-          <div><button type="button" disabled={!canOpen || opening || creation.pending || pickerPending || importMutating}
-            aria-pressed={flow === "open"} onClick={() => chooseFlow("open")}>Open existing project</button>
-            <p>Inspect a directory and open verified Corinthos state, with migration reviewed first.</p></div>
-          <div><button type="button" disabled={!methods.includes("import.inspect") || opening || creation.pending || pickerPending || importMutating}
-            aria-pressed={flow === "import"} onClick={() => chooseFlow("import")}>Import Git repository</button>
-            <p>Review a supported local Git repository before confirming its import.</p></div>
-        </div>
-        {!canOpen && <p>Safe project opening is unavailable in this backend. Reconnect with a current backend.</p>}
-        {(flow === "create" || flow === "open") && <form onSubmit={submit} aria-label={flow === "create" ? "Create project" : "Open project"} noValidate={flow === "create"}>
-          {flow === "open" && <h3>Open existing project</h3>}
-          {flow === "create" && <>
-            <h3>Create new project</h3>
-            <p>The name is application metadata. Creation preserves existing files and prepares only private Corinthos state.</p>
-            <label htmlFor="project-name">Project name</label>
-            <input id="project-name" value={creation.name} maxLength={256} required disabled={creation.pending || pickerPending}
-              aria-invalid={Boolean(creationFields.name)} aria-describedby={creationFields.name ? "project-name-error" : undefined}
-              onChange={(event) => {
-                const name = event.target.value;
-                onCreation((previous) => ({ ...previous, name }));
-                setCreationFields((previous) => ({ ...previous, name: "" }));
-              }} />
-            {creationFields.name && <p id="project-name-error" role="alert">{creationFields.name}</p>}
-          </>}
-          <DirectorySelection id="project-root" label="Project root" value={root}
-            context={`${screen}:${flow}:${creation.name}`}
-            disabled={(flow === "create" ? !canCreate : !canOpen) || opening || creation.pending || pickerPending}
-            invalid={Boolean(flow === "create" && creationFields.root)}
-            describedBy={flow === "create" && creationFields.root ? "project-root-error" : undefined}
-            onPickingChange={pickingChanged} onChange={(path) => {
-              openRequest.current += 1;
-              setInspection(null);
-              setOpenError("");
-              if (flow === "create") onCreation((previous) => ({ ...previous, root: path }));
-              else setOpenRoot(path);
-              setCreationFields((previous) => ({ ...previous, root: "" }));
-            }} />
-          <div className="field-row">
-            <button type="submit" disabled={(flow === "create" ? !canCreate : !canOpen) || opening || creation.pending || pickerPending || (flow === "open" && !root.trim())}>
-              {flow === "create" ? creation.outcome === "uncertain" || creation.outcome === "failed" ? "Retry creation" : "Create project" : "Open project"}
-            </button>
-            <button type="button" className="secondary" disabled={pickerPending} onClick={() => {
-              if (creation.pending) {
-                navigation.current += 1;
-                setFlow(null);
-                onCreation((previous) => ({ ...previous, shown: false }));
-              } else chooseFlow(null);
-            }}>{flow === "create" ? creation.pending ? "Leave creation" : "Cancel creation" : "Cancel"}</button>
-          </div>
-          {flow === "create" && creationFields.root && <p id="project-root-error" role="alert">{creationFields.root}</p>}
-        </form>}
-        {flow === "open" && inspection && <div className="onboarding-review" role="region" aria-label="Open project review" aria-live="polite">
-          <h3>{inspection.status === "MIGRATION_REQUIRED" ? "Migration required" : inspection.status === "UNMANAGED" ? "Directory is not managed" : inspection.status === "INCOMPLETE_IMPORT" ? "Import recovery required" : "Project cannot be opened"}</h3>
-          <code>{inspection.root}</code><p>{inspection.reason}</p>
-          {inspection.status === "MIGRATION_REQUIRED" && <button type="button" disabled={opening || !inspection.inspection_digest}
-            onClick={() => void migrateProject()}>Migrate and open</button>}
-          {inspection.status === "UNMANAGED" && <>
-            <button type="button" disabled={!canCreate || opening} onClick={() => chooseFlow("create", inspection.root)}>Create project here</button>
-            <button type="button" disabled={!inspection.can_import || !methods.includes("import.inspect") || opening}
-              onClick={() => chooseFlow("import", inspection.root)}>Import Git repository</button>
-            {!inspection.can_import && <p>Import is unavailable because this directory is not a supported local Git repository.</p>}
-          </>}
-          {inspection.status === "INCOMPLETE_IMPORT" && <button type="button" disabled={!methods.includes("import.inspect") || opening}
-            onClick={() => chooseFlow("import", inspection.root)}>Review import recovery</button>}
-        </div>}
-        {creation.outcome === "created" && creation.summary && <p role="status">
-          Created {creation.summary.display_name}. <button type="button" disabled={opening || creation.pending}
-            onClick={() => void openProject(creation.summary!.root, false)}>Inspect created project</button>
-        </p>}
-        {opening && <p role="status">Opening project…</p>}
-        {refreshingSelection && !openError && <p role="status">Refreshing selected project…</p>}
-        {openError && <p role="alert">{openError}</p>}
-        {refreshingSelection && openError && <button type="button" disabled={!canInspect}
-          onClick={() => void refreshSelection()}>Retry project refresh</button>}
-        {flow === "import" && <>
-          {importDraft.uncertain && !importMutating && <p role="alert">Import was not confirmed. Inspect the same repository to check its durable state before retrying.</p>}
-          <RepositoryImport path={importDraft.path} onPathChange={(path) => {
-            setConfirmedImport(null);
-            onImportDraft((previous) => ({ ...previous, path }));
-          }}
-            onConfirmed={setConfirmedImport}
-            canCommit={methods.includes("import.commit")} canCheckStatus={methods.includes("import.status")}
-            canOpen={canOpen} disabled={opening || creation.pending || pickerPending}
-            selectionContext={`${screen}:${flow}`} onPickingChange={pickingChanged}
-            onMutationChange={(pending, uncertain) => {
-              setImportMutating(pending);
-              onImportDraft((previous) => ({ ...previous, uncertain }));
-            }} onOpen={async (importedRoot) => {
-              if (canOpen) await openProject(importedRoot, true);
-              else await loadProjects(0);
-            }} />
-          <button type="button" className="secondary" disabled={importMutating || pickerPending} onClick={() => chooseFlow(null)}>Cancel import</button>
-        </>}
-        {confirmedImport && <p role="status" className="import-confirmed">CONFIRMED import <code>{confirmedImport}</code></p>}
-        {!canList && <p>Project browsing is unavailable in this backend.</p>}
-        {loading && canList && <p role="status">Loading projects…</p>}
-        {listError && <p role="alert">{listError} <button disabled={opening} onClick={() => void loadProjects(offset)}>Retry</button></p>}
-        {canList && !loading && !listError && registry.length === 0 && <p>No projects are recorded. Choose Create new project, Open existing project or Import Git repository above to get started.</p>}
-        <ul className="project-list">
-          {(screen === "Home" ? registry.slice(0, 5) : registry).map((entry) => (
-            <RegistryEntry
-              key={entry.root}
-              entry={entry}
-              busy={opening || creation.pending || pickerPending || importMutating || (entry.availability === "AVAILABLE" && !canOpen)}
-              inspect={canInspect}
-              open={(path, explicit) => void openProject(path, explicit)}
-            />
-          ))}
-        </ul>
-        {screen === "Projects" && <div className="field-row">
-          {offset > 0 && <button disabled={loading || opening} onClick={() => void loadProjects(0)}>First projects</button>}
-          {nextOffset !== null && (
-            <button disabled={loading || opening} onClick={() => void loadProjects(nextOffset)}>More projects</button>
-          )}
-        </div>}
-      </section>}
-      {screen === "Home" && <section aria-labelledby="provider-title">
-        <div className="section-heading"><h2 id="provider-title">Providers</h2><span>Cached status</span></div>
-        <Providers providers={providers} />
-      </section>}
-      {screen === "Projects" && project && !refreshingSelection && (
-        <section aria-labelledby="project-title">
-          <div className="section-heading"><h2 id="project-title">Project Summary</h2></div>
-          <ProjectFacts project={project} />
-          {project.initialized && !project.active_project && <div>
-            <button type="button" className="secondary" onClick={() => setShowPlanning((value) => !value)}>
-              Continue with Project Manager
-            </button>
-            {showPlanning && <div>
-              <p>Project Manager draft authoring is available through the terminal. GUI authoring is unavailable in this version.</p>
-              <p>In <code>{project.root}</code>, run <code>corinthos project --root . start</code>.</p>
-              <p>Reserved decisions still require the trusted foreground terminal approval.</p>
-            </div>}
-          </div>}
-          <nav className="field-row project-views" aria-label="Project views">
-            {tabs.filter((tab) => tab.enabled).map(({ tab, label }) => <button type="button" key={tab}
-              aria-pressed={activeTab === tab} onClick={() => setView({ tab })}>{label}</button>)}
-          </nav>
-          {activeTab === "overview" && <ProjectOverview key={project.root}
-            root={project.root} methods={methods} target={view} open={navigate} />}
-          {activeTab === "agents" && (
-            <Agents key={project.root + (view.id ?? "")} root={project.root} methods={methods} providers={providers}
-              initialId={view.id} openTarget={(target) => navigate(project.root, target)} />
-          )}
-          {activeTab === "context" && (
-            <ContextAudit key={project.root + (view.id ?? "")} root={project.root} methods={methods} providers={providers}
-              initialId={view.id} initialHandoff={view.handoff} openTarget={(target) => navigate(project.root, target)} />
-          )}
-          {activeTab === "validation" && <ProjectValidation key={project.root}
-            root={project.root} methods={methods} target={view} open={navigate} />}
-
-          {activeTab === "work" && (
-            <WorkItems
-              key={project.root + (view.id ?? "")}
-              root={project.root}
-              methods={methods}
-              providers={providers}
-              initialId={activeWorkId}
-              onSelect={(id) => {
-                if (mounted.current) setSelectedWork((previous) => ({ ...previous, [project.root]: id }));
-              }}
-              openTarget={(target) => navigate(project.root, target)}
-              onChange={async () => {
-                if (mounted.current && canInspect) {
-                  const current = ++selectionRequest.current;
-                  const result = await bridge.project(project.root, false);
-                  if (mounted.current && selectionRequest.current === current) {
-                    setProject((previous) => previous?.root === result.root ? result : previous);
-                  }
-                }
-              }}
-            />
-          )}
-        </section>
-      )}
-    </>, changeScreen, importMutating
-  );
+  return <div className="overlay"><section ref={panel} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <header><h2 id="modal-title">{title}</h2><button type="button" className="close" aria-label="Close dialog" onClick={onClose}>×</button></header>
+    {children}
+  </section></div>;
 }
 
 export function App() {
-  const [importDraft, setImportDraft] = useState<ImportDraft>({ path: "", uncertain: false });
-  const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
-  const [failure, setFailure] = useState("");
-  const [screen, setScreen] = useState<Screen>("Home");
-  const [view, setView] = useState<ProjectTarget>({ tab: "overview" });
-  const [project, setProject] = useState<ProjectSummary | null>(null);
-  const [selectedWork, setSelectedWork] = useState<Record<string, string>>({});
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [runtime, setRuntime] = useState<RuntimeDiagnostics | null>(null);
-  const [diagnosticsPending, setDiagnosticsPending] = useState(false);
-  const [diagnosticsError, setDiagnosticsError] = useState("");
-  const request = useRef(0);
-  const restartInFlight = useRef(false);
-  const diagnosticsRequest = useRef(0);
-  const diagnosticsInFlight = useRef(false);
-  const creationRequest = useRef(0);
-  const creationInFlight = useRef(false);
-  const [creation, setCreation] = useState<CreationState>({
-    name: "", root: "", shown: false, pending: false, outcome: "draft", error: "", summary: null,
-  });
+  const [backend, setBackend] = useState<BackendSnapshot | null>(null);
+  const [project, setProject] = useState<ProjectRef | null>(null);
+  const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [provider, setProvider] = useState("");
+  const [recent, setRecent] = useState<Recent[]>([]);
+  const [base, setBase] = useState("");
+  const [showRecent, setShowRecent] = useState(false);
+  const [modal, setModal] = useState<ModalState>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [conversations, setConversations] = useState<Record<string, Conversation>>({});
+  const [currentConversation, setCurrentConversation] = useState("");
+  const [operations, setOperations] = useState<Record<string, GuiOperation>>({});
+  const [runStatuses, setRunStatuses] = useState<Record<string, RunStatus & {discarded?: boolean}>>({});
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [creationId, setCreationId] = useState("");
+  const [providerName, setProviderName] = useState("local");
+  const [command, setCommand] = useState("");
+  const [providerReturn, setProviderReturn] = useState<ModalState>(null);
+  const [summary, setSummary] = useState<{empty: boolean; items: string[]} | null>(null);
+  const [summaryProject, setSummaryProject] = useState("");
+  const [discardTarget, setDiscardTarget] = useState<RunTarget | null>(null);
+  const [discardSummary, setDiscardSummary] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const state = useRef({ conversations, operations, runStatuses, project, creationId, modal });
+  state.current = { conversations, operations, runStatuses, project, creationId, modal };
+  const scope = useRef("main");
+  const modalGeneration = useRef(0);
+  const polling = useRef(false);
+  const mounted = useRef(true);
+  const streams = useRef<Record<string, { cursor: number; text: string; complete: boolean }>>({});
+  const retiredRuns = useRef(new Set<string>());
+  const ready = backend?.connection === "ready";
 
-  function applySnapshot(result: BackendSnapshot) {
-    setSnapshot(result);
-    setConnection(result.connection === "ready" ? "connected" : result.connection);
-    setFailure(result.connection === "ready" ? "" : result.error ?? "The sidecar is disconnected.");
+  function rememberOperation(value: GuiOperation) {
+    setOperations(previous => ({ ...previous, [value.operation_id]: value }));
   }
-
-  function disconnected(error = "The sidecar connection closed.") {
-    request.current += 1;
-    creationRequest.current += 1;
-    diagnosticsRequest.current += 1;
-    creationInFlight.current = false;
-    diagnosticsInFlight.current = false;
-    restartInFlight.current = false;
-    setDiagnosticsPending(false);
-    setCreation((previous) => previous.pending ? { ...previous, pending: false, shown: true, outcome: "uncertain",
-      error: "Creation may have completed before disconnect. Reconnect, inspect the selected directory, or explicitly retry with the same name and path." } : previous);
-    setConnection("disconnected");
-    setFailure(error);
+  function mergeConversation(value: Conversation) {
+    value = { ...value, messages: value.messages.map(message => {
+      const stream = message.run_id ? streams.current[value.conversation_id + ":" + message.run_id] : undefined;
+      return stream?.text ? { ...message, text: stream.text, truncated: !stream.complete && message.truncated } : message;
+    }) };
+    setConversations(previous => ({ ...previous, [value.conversation_id]: value }));
+    return value;
   }
-
-  async function createProject() {
-    if (creationInFlight.current) return null;
-    creationInFlight.current = true;
-    const current = ++creationRequest.current;
-    setCreation((previous) => ({ ...previous, pending: true, outcome: "draft", error: "", summary: null }));
-    try {
-      const result = await bridge.createProject(creation.root, creation.name);
-      if (current !== creationRequest.current) return null;
-      setCreation((previous) => ({ ...previous, pending: false, shown: false, outcome: "created", summary: result }));
-      return result;
-    } catch (error) {
-      const code = error instanceof ProjectCreationError ? error.creationCode : "UNCONFIRMED";
-      const messages = {
-        INVALID_INPUT: "Check the project name and absolute local directory path, then retry creation.",
-        CONFLICT: "This directory already has a different creation name or conflicting state. Inspect it and retry only with its original name and path.",
-        ACCESS_DENIED: "Corinthos could not access the selected directory. Check its permissions, then retry with the same name and path.",
-        STATE_UNAVAILABLE: "Corinthos could not verify the existing private state. Its contents were retained; inspect the selected directory before retrying.",
-        REGISTRY_INCOMPLETE: "Private initialization completed, but Projects could not save the entry. Retry with the same name and path to recover registration.",
-        UNCONFIRMED: "Creation was not confirmed. Inspect the selected directory or explicitly retry with the same name and path; valid initialized state is retained.",
-      };
-      if (current === creationRequest.current) setCreation((previous) => ({ ...previous, pending: false,
-        outcome: code === "UNCONFIRMED" ? "uncertain" : "failed", error: messages[code] }));
-      return null;
-    } finally {
-      if (current === creationRequest.current) creationInFlight.current = false;
-    }
+  async function readRecents() {
+    const value = await bridge.projects();
+    if (mounted.current) { setRecent(value.projects); setBase(value.base); }
   }
-
-  useEffect(() => {
-    let mounted = true;
-    let unlisten: (() => void) | undefined;
-    const current = ++request.current;
-    async function connect() {
-      try {
-        const release = await bridge.onDisconnect(() => {
-          if (mounted) disconnected();
-        });
-        if (!mounted) {
-          release();
-          return;
-        }
-        unlisten = release;
-        const result = await bridge.snapshot();
-        if (mounted && request.current === current) applySnapshot(result);
-      } catch {
-        if (mounted && request.current === current) {
-          setConnection("unavailable");
-          setFailure("The desktop bridge could not connect.");
-        }
+  async function selectProject(selected: ProjectRef | null) {
+    scope.current = selected?.project_id || "main";
+    const requested = scope.current;
+    setProject(selected); setShowRecent(false); setError(""); setCurrentConversation("");
+    const value = await bridge.conversation(selected);
+    if (!mounted.current) return;
+    mergeConversation(value);
+    if (scope.current === requested) setCurrentConversation(value.conversation_id);
+    for (const message of value.messages) {
+      if (message.operation_id && (message.run_id || active(message.status))) {
+        try { rememberOperation(await bridge.operation(message.operation_id)); }
+        catch { /* Retained runs are restored below even after bounded operation history expires. */ }
       }
     }
+    if (selected) {
+      const retained = await bridge.runs(selected);
+      for (const run of retained.runs) {
+        const identity = "saved-" + run.run_id;
+        rememberOperation({operation_id: identity, kind: run.skill === "conversation" ? "conversation" : "execute", status: run.status, phase: "Retained run", project: selected, run: {run_id: run.run_id, project_id: selected.project_id}});
+        setRunStatuses(previous => ({...previous, [selected.project_id + ":" + run.run_id]: run}));
+      }
+    }
+  }
+  async function connect(restart = false) {
+    setError("");
+    try {
+      const value = await (restart ? bridge.restart() : bridge.snapshot());
+      if (!mounted.current) return;
+      setBackend(value);
+      if (value.connection === "ready") {
+        setProviders(value.providers.providers);
+        setProvider(previous => previous || value.providers.providers.find(item => item.available)?.provider || "");
+        try { await readRecents(); } catch (failure) { setError(errorText(failure)); }
+        await selectProject(state.current.project);
+      } else setError(value.error || "The local backend is unavailable.");
+    } catch (failure) { if (mounted.current) setError(errorText(failure)); }
+  }
+  useEffect(() => {
+    mounted.current = true;
     void connect();
-    return () => {
-      mounted = false;
-      request.current += 1;
-      creationRequest.current += 1;
-      diagnosticsRequest.current += 1;
-      unlisten?.();
-    };
+    const subscription = bridge.onDisconnect(() => { setBackend(null); setError("The local backend disconnected. Reconnect to inspect running work."); });
+    return () => { mounted.current = false; void subscription.then(stop => stop()); };
   }, []);
 
-  async function reconnect() {
-    if (restartInFlight.current) return;
-    restartInFlight.current = true;
-    const current = ++request.current;
-    diagnosticsRequest.current += 1;
-    diagnosticsInFlight.current = false;
-    setDiagnosticsPending(false);
-    setConnection("restarting");
-    setRuntime(null);
-    setFailure("");
-    try {
-      const result = await bridge.restart();
-      if (request.current === current) applySnapshot(result);
-    } catch {
-      if (request.current === current) disconnected("The sidecar could not restart.");
-    } finally {
-      if (request.current === current) restartInFlight.current = false;
-    }
-  }
-
-  async function loadDiagnostics() {
-    if (connection !== "connected" || snapshot?.connection !== "ready" ||
-        !snapshot.handshake.methods.includes("system.diagnostics") || diagnosticsInFlight.current) return;
-    diagnosticsInFlight.current = true;
-    const current = ++diagnosticsRequest.current;
-    const generation = request.current;
-    setDiagnosticsPending(true);
-    setDiagnosticsError("");
-    try {
-      const result = await bridge.diagnostics();
-      if (diagnosticsRequest.current === current && request.current === generation) setRuntime(result);
-    } catch {
-      if (diagnosticsRequest.current === current && request.current === generation) {
-        setDiagnosticsError("Runtime diagnostics could not be read. Close and reopen this view to retry.");
-      }
-    } finally {
-      if (diagnosticsRequest.current === current && request.current === generation) {
-        diagnosticsInFlight.current = false;
-        setDiagnosticsPending(false);
-      }
-    }
-  }
-
   useEffect(() => {
-    if (showDiagnostics && connection === "connected") void loadDiagnostics();
-  }, [connection]);
+    if (!ready) return;
+    const timer = setInterval(() => void poll(), 450);
+    return () => clearInterval(timer);
+  }, [ready]);
 
-  function diagnostics(projectCurrent: boolean) {
-    return <BackendDiagnostics snapshot={snapshot} connection={connection} runtime={runtime}
-      project={project} projectCurrent={projectCurrent} open={showDiagnostics} pending={diagnosticsPending}
-      error={diagnosticsError} onToggle={(open) => {
-        setShowDiagnostics(open);
-        if (open && !showDiagnostics) void loadDiagnostics();
-      }} />;
+  async function poll() {
+    if (polling.current) return;
+    polling.current = true;
+    try {
+      for (const previous of Object.values(state.current.operations).filter(item => active(item.status) && !item.operation_id.startsWith("saved-"))) {
+        const value = await bridge.operation(previous.operation_id);
+        if (!mounted.current) return;
+        rememberOperation(value);
+        if (value.kind === "conversation") {
+          const conversation = Object.values(state.current.conversations).find(item => item.messages.some(message => message.operation_id === value.operation_id));
+          if (conversation) mergeConversation(await bridge.conversationGet(conversation.conversation_id));
+        }
+        if (value.operation_id === state.current.creationId && !active(value.status)) {
+          setCreationId("");
+          if (value.status === "SUCCEEDED" && value.project) {
+            setModal(null); setName(""); setDescription(""); setNotice(value.message || "Project ready.");
+            await readRecents(); await selectProject(value.project);
+          } else if (value.status === "CANCELLED") { setModal(null); setNotice(value.error || "Cancelled."); }
+          else setError(value.error || "Project creation failed.");
+        } else if (value.kind === "import" && !active(value.status)) {
+          if (value.status === "SUCCEEDED" && value.project) { setNotice(value.message || "Project imported."); await readRecents(); await selectProject(value.project); }
+          else setError(value.error || "Import stopped.");
+        }
+        if (value.kind === "action" && !active(value.status)) {
+          if (value.status === "FAILED") setError(value.error || "The original run could not be changed.");
+          else if (value.result?.discarded && value.project) {
+            const key = value.project.project_id + ":" + value.result.discarded;
+            retiredRuns.current.add(key);
+            setRunStatuses(previousStatuses => ({...previousStatuses, [key]: {...previousStatuses[key], discarded: true}}));
+            for (const key of Object.keys(streams.current)) if (key.endsWith(":" + value.result.discarded)) streams.current[key].complete = true;
+            const origin = Object.values(state.current.conversations).find(item => item.project?.project_id === value.project!.project_id);
+            if (origin) mergeConversation(await bridge.conversationGet(origin.conversation_id));
+            setNotice("Run discarded after retaining its summary.");
+          } else if (value.result?.applied_count !== undefined) {
+            setNotice(`Applied ${value.result.applied_count} changed paths to ${value.project?.name}.`);
+            if (value.project && value.run) {
+              const key = value.project.project_id + ":" + value.run.run_id;
+              setRunStatuses(previous => ({...previous, [key]: {...previous[key], integrated: true}}));
+            }
+          }
+        }
+      }
+      for (const conversation of Object.values(state.current.conversations)) {
+        for (const message of conversation.messages) {
+          if (!message.run_id) continue;
+          if (conversation.project && retiredRuns.current.has(conversation.project.project_id + ":" + message.run_id)) continue;
+          const key = conversation.conversation_id + ":" + message.run_id;
+          const stream = streams.current[key] || {cursor: 0, text: "", complete: false};
+          if (!stream.complete) {
+            const chunk = await bridge.output(conversation.conversation_id, message.run_id, stream.cursor);
+            streams.current[key] = {cursor: chunk.cursor, text: (stream.text + chunk.text).slice(0, 1024 * 1024), complete: chunk.complete};
+            mergeConversation({...conversation, messages: conversation.messages});
+          }
+        }
+      }
+      const cards = Object.values(state.current.operations).filter(item => item.project && item.run && item.kind !== "action" && item.kind !== "create");
+      for (const card of cards) {
+        const key = card.project!.project_id + ":" + card.run!.run_id;
+        if (retiredRuns.current.has(key) || state.current.runStatuses[key]?.discarded) continue;
+        if (state.current.runStatuses[key] && !active(state.current.runStatuses[key].status) && !Object.values(state.current.operations).some(item => item.kind === "action" && item.run?.run_id === card.run!.run_id && active(item.status))) continue;
+        const value = await bridge.run(card.project!, card.run!.run_id);
+        setRunStatuses(previous => ({...previous, [key]: value}));
+      }
+    } catch (failure) { if (mounted.current) setError(errorText(failure)); }
+    finally { polling.current = false; }
   }
 
-  const ready = connection === "connected" && snapshot?.connection === "ready";
-  const generation = request.current;
-
-  function renderShell(children: ReactNode, navigate: (value: Screen) => void, disabled: boolean) {
-    return <ApplicationShell screen={screen} navigate={navigate} disabled={disabled} connection={connection}
-      onReconnect={() => void reconnect()}>
-      {creation.pending && <p role="status">Creating project. The outcome is not yet confirmed. Leaving this form does not cancel backend initialization.</p>}
-      {creation.error && <div role="alert"><p>{creation.error}</p>
-        <p>{creation.name} <code>{creation.root}</code></p>
-      </div>}
-      {children}
-    </ApplicationShell>;
+  async function pick(mode: "open" | "import") {
+    if (picking) return;
+    setPicking(true); setError(""); setNotice(""); setShowRecent(false);
+    try {
+      const path = await bridge.selectProjectDirectory();
+      if (path === null) return;
+      if (mode === "open") { const selected = await bridge.openProject(path); await readRecents(); await selectProject(selected); }
+      else {
+        const result = await bridge.importProject(path);
+        if (result.project) { await readRecents(); await selectProject(result.project); }
+        else if (result.operation) { rememberOperation(result.operation); setNotice("Importing an independent working copy; the original source will remain unchanged."); }
+      }
+    } catch (failure) { setError(errorText(failure)); }
+    finally { setPicking(false); }
   }
-
-  if (ready && snapshot.handshake.methods.includes("skill.run")) {
-    return renderShell(<section aria-labelledby="prototype-title">
-      <h2 id="prototype-title">Prototype workspace backend</h2>
-      <p>Project work now uses project-local skills. The previous Engine screens are unavailable until their GUI bindings are adapted.</p>
-      <p>Use the shared command with an explicit project root:</p>
-      <pre>corinthos project init --root &lt;project&gt;{ "\n" }corinthos skill list --root &lt;project&gt;{ "\n" }corinthos run list --root &lt;project&gt;</pre>
-      <ProductUpdate methods={snapshot.handshake.methods} />
-    </section>, setScreen, false);
+  async function resume(entry: Recent) {
+    try { const selected = await bridge.openProject(entry.root); await readRecents(); await selectProject(selected); }
+    catch (failure) { setError(errorText(failure)); }
   }
+  async function send(message: string) {
+    const origin = state.current.conversations[currentConversation];
+    if (!origin || !provider) { setError("Configure and select an available provider first."); return; }
+    setError("");
+    try { const op = await bridge.send(origin.conversation_id, message, provider); rememberOperation(op); mergeConversation(await bridge.conversationGet(origin.conversation_id)); }
+    catch (failure) { setError(errorText(failure)); }
+  }
+  async function createProject() {
+    setSubmitting(true); setError("");
+    try { const value = await bridge.createProject(name, description, provider); setCreationId(value.operation_id); rememberOperation(value); }
+    catch (failure) { setError(errorText(failure)); }
+    finally { setSubmitting(false); }
+  }
+  async function closeModal() {
+    if (creationId && active(operations[creationId]?.status)) {
+      try {
+        const result = await bridge.cancelOperation(creationId);
+        rememberOperation(result);
+        if (!active(result.status)) {
+          setCreationId("");
+          if (result.status === "SUCCEEDED" && result.project) {setModal(null); await readRecents(); await selectProject(result.project);}
+          else if (result.status === "CANCELLED") {setModal(null); setNotice(result.error || "Cancelled.");}
+          else setError(result.error || "Creation stopped.");
+        }
+      } catch (failure) { setError(errorText(failure)); }
+      return;
+    }
+    modalGeneration.current++; setModal(null); setError("");
+  }
+  async function openSummary(kind: "ideas" | "tasks") {
+    if (!project) return;
+    const generation = ++modalGeneration.current;
+    const origin = project;
+    setModal(kind); setSummary(null); setSummaryProject(origin.name); setError("");
+    try { const result = await bridge.summary(origin, kind); if (generation === modalGeneration.current) setSummary(result); }
+    catch (failure) { if (generation === modalGeneration.current) setError(errorText(failure)); }
+  }
+  async function executeTasks() {
+    if (!project) return;
+    setError("");
+    try { const result = await bridge.execute(project, provider); if (result.empty) setNotice("No Tasks Yet"); else if (result.operation) rememberOperation(result.operation); }
+    catch (failure) { setError(errorText(failure)); }
+  }
+  async function actOnRun(target: RunTarget, action: "apply" | "discard" | "cancel", summary = "") {
+    setError("");
+    try { rememberOperation(await bridge.runAction(target.project, target.run_id, action, summary)); if (action === "discard") setModal(null); }
+    catch (failure) { setError(errorText(failure)); }
+  }
+  async function saveProvider() {
+    setSubmitting(true); setError("");
+    try {
+      const parsed: unknown = JSON.parse(command);
+      if (!Array.isArray(parsed) || !parsed.every(item => typeof item === "string")) throw new Error("Enter a JSON array containing the native executable and arguments.");
+      const result = await bridge.providerConfigure(providerName, parsed);
+      setProviders(result.providers); setProvider(providerName); setModal(providerReturn); setProviderReturn(null);
+    } catch (failure) { setError(errorText(failure)); }
+    finally { setSubmitting(false); }
+  }
+  const conversation = conversations[currentConversation];
+  const busy = Boolean(conversation?.messages.some(message => active(message.status)));
+  const currentOperation = conversation?.messages.filter(message => active(message.status)).at(-1)?.operation_id;
+  const cards = Object.values(operations).filter(item => project && item.project?.project_id === project.project_id && item.run && ["conversation", "execute"].includes(item.kind)).filter((item,index,all) => all.findIndex(other => other.run?.run_id === item.run?.run_id) === index);
+  const toolbar = <div className="provider-toolbar"><label>Provider<select aria-label="Provider" value={provider} onChange={event => setProvider(event.target.value)} disabled={!ready}>
+    <option value="">Select provider</option>{providers.map(item => <option key={item.provider} value={item.provider} disabled={!item.available}>{item.provider}{item.available ? "" : " (unavailable)"}</option>)}
+  </select></label><button type="button" onClick={() => {setProviderReturn(null); setError(""); setModal("provider");}} disabled={!ready}>Configure provider</button></div>;
+  const actions = <div className="run-cards">{cards.map(card => {
+    const target = {project: card.project!, run_id: card.run!.run_id};
+    const key = target.project.project_id + ":" + target.run_id;
+    const run = runStatuses[key];
+    if (run?.discarded) return null;
+    const actionPending = Object.values(operations).some(item => item.kind === "action" && item.run?.run_id === target.run_id && active(item.status));
+    return <section className="run-card" key={card.operation_id} aria-label={`Run for ${target.project.name}`}><strong>{card.kind === "execute" ? "Task run" : "Conversation run"} · {target.project.name}</strong>
+      <p role="status">{run?.integrated ? "Changes applied" : (run?.status || card.status) + " · changes remain isolated"}</p>
+      {card.error && <p role="alert">{card.error}</p>}
+      <div className="button-row">{active(run?.status || card.status) ? <button disabled={actionPending} onClick={() => void actOnRun(target, "cancel")}>Cancel run</button> : <>
+        {run?.status === "SUCCEEDED" && !run.integrated && <button disabled={actionPending} onClick={() => void actOnRun(target, "apply")}>Apply Changes</button>}
+        <button disabled={actionPending} onClick={() => {setDiscardTarget(target); setDiscardSummary("Reviewed this run and retained its outcome."); setModal("discard");}}>Discard</button>
+      </>}</div></section>;
+  })}</div>;
 
-  return ready ? <Workspace methods={snapshot.handshake.methods} providers={snapshot.providers.providers}
-        creation={creation} onCreation={setCreation} onCreate={createProject} importDraft={importDraft} onImportDraft={setImportDraft}
-        screen={screen} setScreen={setScreen} view={view} setView={setView} project={project} setProject={setProject}
-        selectedWork={selectedWork} setSelectedWork={setSelectedWork} renderDiagnostics={diagnostics} renderShell={renderShell}
-        onProviders={(providers) => {
-          if (request.current === generation) setSnapshot((current) => current?.connection === "ready"
-            ? { ...current, providers: { providers } } : current);
-        }} /> : renderShell(<section aria-labelledby="support-title">
-          <div className="section-heading"><h2 id="support-title">Backend support</h2></div>
-          {failure && <p role="alert">{failure}</p>}
-          <p>{connection === "connecting" ? "Waiting for the sidecar handshake."
-            : connection === "restarting" ? "Restarting the sidecar."
-            : "Check the private runtime and reconnect when it is available."}</p>
-          {diagnostics(true)}
-        </section>, () => {}, true);
+  return <><div className="app-shell" inert={modal !== null} data-gui-ready={ready ? "true" : "false"} data-page={project ? "project" : "main"}>
+    <aside className="sidebar"><button className="brand" aria-label="Main page" onClick={() => void selectProject(null).catch(failure => setError(errorText(failure)))}><img src={reference} alt="Corinthos — four-column temple and silver wordmark" /></button>
+      <nav aria-label={project ? "Project navigation" : "Main navigation"}>{project ? <>
+        <p className="project-name" title={project.root}>{project.name}</p>
+        <button onClick={() => void openSummary("ideas")}>Future Ideas</button><button onClick={() => void openSummary("tasks")}>Task List</button><button onClick={() => void executeTasks()} disabled={!ready}>Execute Tasks</button>
+      </> : <>
+        <button onClick={() => {setError(""); setModal("create");}} disabled={!ready}>Create Project</button>
+        <button aria-expanded={showRecent} onClick={() => {setShowRecent(!showRecent); if (!showRecent) void readRecents().catch(failure => setError(errorText(failure)));}} disabled={!ready || picking}>Resume Project</button>
+        {showRecent && <div className="recents" role="group" aria-label="Recent projects">{recent.slice(0,10).map((entry, index) => <button key={entry.root + index} disabled={!entry.available} onClick={() => void resume(entry)} title={entry.root}><strong>{entry.name}</strong><small>{entry.available ? entry.root : "Unavailable — choose another folder"}</small></button>)}<button className="choose-other" onClick={() => void pick("open")}>... <span>Choose Other</span></button></div>}
+        <button onClick={() => void pick("import")} disabled={!ready || picking}>Import Project</button>
+      </>}</nav>
+      <footer><button className="update-button" onClick={() => {setError(""); setModal("update");}}>Update</button><small>{backend?.desktop.version || "Corinthos"} · {ready ? "Connected" : "Connecting"}</small></footer>
+    </aside>
+    <main>{!ready && <div className="connection-state" role="status">{error || "Connecting to the local backend…"}<button onClick={() => void connect(true)}>Reconnect</button></div>}
+      {picking && <p className="notice" role="status">Choose a local project folder. Cancel leaves the project unchanged.</p>}
+      {notice && <p className="notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={() => setNotice("")}>×</button></p>}
+      {error && ready && <p className="error-banner" role="alert">{error}<button aria-label="Dismiss error" onClick={() => setError("")}>×</button></p>}
+      {project?.import_source && <p className="copy-note">Independent working copy · original source preserved at <span title={project.import_source}>{project.import_source}</span></p>}
+      <ConversationView key={currentConversation || scope.current} title={project ? `This is the ${project.name} project page` : "Welcome to Corinthos"} messages={conversation?.messages || []} busy={busy || !ready || !conversation} error={conversation?.omitted ? "Older messages were omitted from this bounded view." : undefined} onSend={message => void send(message)} onCancel={currentOperation ? () => void bridge.cancelOperation(currentOperation).then(rememberOperation).catch(failure => setError(errorText(failure))) : undefined} toolbar={toolbar} actions={actions} />
+    </main>
+  </div>
+  {modal && <Modal title={modal === "create" ? "Create Project" : modal === "provider" ? "Configure provider" : modal === "update" ? "Update Corinthos" : modal === "discard" ? "Discard isolated run" : `${modal === "ideas" ? "Future Ideas" : "Task List"} — ${summaryProject}`} onClose={() => void closeModal()}>
+    {error && <p role="alert">{error}</p>}
+    {modal === "create" && <form onSubmit={event => {event.preventDefault(); void createProject();}}>
+      <label htmlFor="project-name">Project name</label><input id="project-name" value={name} maxLength={80} required disabled={Boolean(creationId)} onChange={event => setName(event.target.value)} />
+      <label htmlFor="project-description">Project description</label><textarea id="project-description" value={description} maxLength={4000} disabled={Boolean(creationId)} onChange={event => setDescription(event.target.value)} />
+      <p className="destination">Destination: <span>{base}{base.includes("\\") ? "\\" : "/"}{name || "<project name>"}</span></p>
+      {!provider && <p>Select a provider in the composer before creating a project. <button type="button" onClick={() => {setProviderReturn("create"); setModal("provider");}}>Configure provider</button></p>}
+      {creationId && <p role="status">{operations[creationId]?.phase || "Preparing"}{operations[creationId]?.cancel_requested ? " · cancellation pending" : ""}</p>}
+      <div className="button-row"><button type="button" onClick={() => void closeModal()}>Cancel</button><button className="primary" disabled={submitting || Boolean(creationId) || !provider} type="submit">Create Project</button></div>
+    </form>}
+    {modal === "provider" && <form onSubmit={event => {event.preventDefault(); void saveProvider();}}><p>Use an installed native executable that accepts the prompt on standard input. Provider sign-in uses its own normal configuration.</p><label htmlFor="provider-name">Provider name</label><input id="provider-name" value={providerName} maxLength={64} required onChange={event => setProviderName(event.target.value)} /><label htmlFor="provider-command">Executable and arguments (JSON array)</label><textarea id="provider-command" value={command} required placeholder={'["C:\\Tools\\provider.exe", "argument"]'} onChange={event => setCommand(event.target.value)} /><div className="button-row"><button type="button" onClick={() => void closeModal()}>Cancel</button><button className="primary" disabled={submitting}>Save provider</button></div></form>}
+    {modal === "update" && <ProductUpdate methods={backend?.connection === "ready" ? backend.handshake.methods : []} />}
+    {(modal === "ideas" || modal === "tasks") && <>{!summary && !error ? <p role="status">Reading current project content…</p> : summary?.empty ? <p className="empty">Nothing Yet</p> : <ul className="summary-list">{summary?.items.map((item,index) => <li key={index}>{item}</li>)}</ul>}</>}
+    {modal === "discard" && discardTarget && <form onSubmit={event => {event.preventDefault(); void actOnRun(discardTarget, "discard", discardSummary);}}><p>Discard the isolated output for <strong>{discardTarget.project.name}</strong>. Existing project files are preserved.</p><label htmlFor="discard-summary">Retained outcome summary</label><textarea id="discard-summary" value={discardSummary} required maxLength={2048} onChange={event => setDiscardSummary(event.target.value)} /><div className="button-row"><button type="button" onClick={() => void closeModal()}>Cancel</button><button className="primary">Discard</button></div></form>}
+  </Modal>}
+  </>;
 }
