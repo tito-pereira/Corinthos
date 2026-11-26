@@ -123,9 +123,9 @@ def get(root, run_id, *, blocking=True):
     return run
 
 
-def output(root, run_id, cursor=0):
+def output(root, run_id, cursor=0, *, blocking=True):
     """Read only a selected run's bounded UTF-8 output, with a byte cursor."""
-    run = get(root, run_id)
+    run = get(root, run_id, blocking=blocking)
     if type(cursor) is not int or not 0 <= cursor <= 1024 * 1024:
         raise IntegrityError("Supply a bounded output cursor.")
     path = _run_directory(root, run_id) / "output.txt"

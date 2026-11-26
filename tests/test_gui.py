@@ -224,16 +224,105 @@ def test_interrupted_publication_restores_only_owned_staging(local_provider):
 
 
 def test_status_read_does_not_wait_for_long_project_integration(local_provider, tmp_path):
+    from corinthos.application.service import invoke
     from corinthos.filesystem import file_lock
 
     selected = project(tmp_path, "Busy integration")
+    conversation = gui.conversation_open(selected)
+    completed = wait(gui.conversation_send(conversation["conversation_id"], "hello", "fixture"))
+    assert completed["status"] == "SUCCEEDED", completed
+    run_id = completed["run"]["run_id"]
+    operations = set((gui._home() / "operations").glob("*.json"))
     started = time.monotonic()
     with file_lock(Path(selected["root"]) / "context_agents/corinthos/project.lock"):
         with pytest.raises(ConflictError, match="owns"):
             gui.run_get(selected, "a" * 32)
         with pytest.raises(ConflictError, match="owns"):
             gui.runs(selected)
+        output = invoke(
+            "gui.conversation.output",
+            {"conversation_id": conversation["conversation_id"], "run_id": run_id, "cursor": 0},
+        )
+        assert output["ok"] is False and "Retry output" in output["error"]
+        action = invoke(
+            "gui.run.action", {"project": selected, "run_id": run_id, "action": "apply"}
+        )
+        assert action["ok"] is False and "not queued" in action["error"]
     assert time.monotonic() - started < 1
+    assert set((gui._home() / "operations").glob("*.json")) == operations
+    retried = gui.conversation_output(conversation["conversation_id"], run_id, cursor=0)
+    assert "Conversation reply" in retried["text"] and retried["complete"]
+    assert wait(gui.run_action(selected, run_id, "apply"))["status"] == "SUCCEEDED"
+
+
+@pytest.mark.parametrize("admitted_run", [False, True])
+def test_dead_conversation_recovers_message_and_allows_later_send(
+    local_provider, tmp_path, monkeypatch, admitted_run
+):
+    selected = project(tmp_path, "Interrupted conversation")
+    conversation = gui.conversation_open(selected)
+    with monkeypatch.context() as paused:
+        paused.setattr(gui, "_launch_operation", lambda identity: None)
+        operation = gui.conversation_send(conversation["conversation_id"], "first", "fixture")
+    gui._change_op(operation["operation_id"], status="RUNNING", created_at=time.time() - 30)
+    changes = {"text": "Already retained output", "status": "RUNNING"}
+    if admitted_run:
+        run = runtime.start(
+            selected["root"],
+            "conversation",
+            provider="fixture",
+            prepared_prompt="slow-request",
+            claims=gui._CLAIMS,
+        )
+        changes["run_id"] = run["run_id"]
+        gui._change_op(operation["operation_id"], run=run)
+    gui._update_message(conversation["conversation_id"], operation["operation_id"], **changes)
+    assert gui.operation_get(operation["operation_id"])["status"] == "INTERRUPTED"
+    recovered = gui.conversation_get(conversation["conversation_id"])["messages"][-1]
+    assert recovered["status"] == "INTERRUPTED"
+    assert recovered["text"] == changes["text"]
+    assert recovered["operation_id"] == operation["operation_id"]
+    if admitted_run:
+        assert recovered["run_id"] == run["run_id"]
+        # Recovering the coordinator must neither cancel nor discard a live provider.
+        assert runtime.get(selected["root"], run["run_id"])["status"] in runtime.ACTIVE
+        deadline = time.monotonic() + 10
+        while runtime.get(selected["root"], run["run_id"])["status"] in runtime.ACTIVE:
+            assert time.monotonic() < deadline
+            time.sleep(0.03)
+        assert (
+            "Conversation reply"
+            in gui.conversation_output(conversation["conversation_id"], run["run_id"])["text"]
+        )
+        assert runtime.get(selected["root"], run["run_id"])["integrated"] is False
+    later = wait(gui.conversation_send(conversation["conversation_id"], "later", "fixture"))
+    assert later["status"] == "SUCCEEDED", later
+
+
+def test_live_conversation_owner_is_not_recovered(local_provider, tmp_path, monkeypatch):
+    selected = project(tmp_path, "Owned conversation")
+    conversation = gui.conversation_open(selected)
+    with monkeypatch.context() as paused:
+        paused.setattr(gui, "_launch_operation", lambda identity: None)
+        operation = gui.conversation_send(conversation["conversation_id"], "first", "fixture")
+    identity = operation["operation_id"]
+    gui._change_op(identity, status="RUNNING", created_at=time.time() - 30)
+    runtime._register(gui._home(), identity)
+    with runtime.worker_ownership(gui._home(), identity):
+        assert gui.operation_get(identity)["status"] == "RUNNING"
+        assert (
+            gui.conversation_get(conversation["conversation_id"])["messages"][-1]["status"]
+            == "STARTING"
+        )
+        with pytest.raises(ConflictError, match="active request"):
+            gui.conversation_send(conversation["conversation_id"], "too early", "fixture")
+    # Direct admission also performs recovery, without requiring an earlier status poll.
+    later = wait(gui.conversation_send(conversation["conversation_id"], "later", "fixture"))
+    assert later["status"] == "SUCCEEDED", later
+    assert (
+        gui.conversation_get(conversation["conversation_id"])["messages"][1]["status"]
+        == "INTERRUPTED"
+    )
 
 
 def test_recent_hints_do_not_duplicate_large_project_descriptions(tmp_path):

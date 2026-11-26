@@ -85,4 +85,38 @@ describe("two-page GUI",()=>{
     expect(invoke.mock.calls.filter(call=>["gui.conversation.output","gui.run.get"].includes(call[1]?.method))).toHaveLength(retiredRequests);
     expect(host.textContent).toContain(message.text);expect(host.textContent).not.toContain("Stale");
   });
+  it.each([false,true])("merges a delayed final chunk into latest terminal state (switch page: %s)",async(switchPage)=>{
+    const normalInvoke=invoke.getMockImplementation()!;
+    const initialMessages=[{role:"user",text:"Original question"},{role:"assistant",text:"",operation_id:"conversation-op",run_id:"run-one",status:"RUNNING"}];
+    const terminalMessages=[initialMessages[0],{...initialMessages[1],status:"SUCCEEDED",text:"finished reply"},{role:"user",text:"Retained newer message"}];
+    let operationReads=0,outputRequested=false;
+    let finishOutput!:(value:unknown)=>void;
+    const output=new Promise(resolve=>{finishOutput=resolve;});
+    invoke.mockImplementation(async(command:string,args?:{method:string;params:Record<string,unknown>})=>{
+      if(command!=="workspace_request")return normalInvoke(command,args);
+      let value;
+      if(args?.method==="gui.conversation.open"&&args.params.project)value={conversation_id:"project-conversation",kind:"project",project,messages:operationReads>1?terminalMessages:initialMessages,omitted:0};
+      else if(args?.method==="gui.operation.get")value={operation_id:"conversation-op",kind:"conversation",status:++operationReads===1?"RUNNING":"SUCCEEDED",phase:"Reply",project,run:{run_id:"run-one",project_id:project.project_id}};
+      else if(args?.method==="gui.conversation.get")value={conversation_id:"project-conversation",kind:"project",project,messages:terminalMessages,omitted:0};
+      else if(args?.method==="gui.conversation.output"){outputRequested=true;value=await output;}
+      else if(args?.method==="gui.run.get")value={run_id:"run-one",status:"SUCCEEDED",integrated:false,error:null};
+      else return normalInvoke(command,args);
+      return{ok:true,value};
+    });
+    await render();await click("Resume Project");await click("... Choose Other");
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(true);
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,500));});
+    expect(outputRequested).toBe(true);
+    if(switchPage)await act(async()=>{host.querySelector<HTMLButtonElement>("[aria-label='Main page']")!.click();});
+    await act(async()=>{finishOutput({text:"finished reply",cursor:14,complete:true});await new Promise(resolve=>setTimeout(resolve,0));});
+    if(switchPage){
+      expect(host.textContent).toContain("Welcome to Corinthos");expect(host.textContent).not.toContain("finished reply");
+      await click("Resume Project");await click("... Choose Other");
+    }
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
+    expect(host.querySelector("[role=log]")?.textContent).toContain("SUCCEEDED");
+    expect(host.querySelector("[role=log]")?.textContent).not.toContain("RUNNING");
+    expect(host.querySelector("[role=log]")?.textContent).toContain("Retained newer message");
+    expect(host.textContent?.match(/finished reply/g)).toHaveLength(1);
+  });
 });

@@ -280,6 +280,7 @@ def operation_get(operation_id):
         # Completion can race the ownership probe; never replace a terminal result.
         value = _read_op(operation_id)
         if value["status"] not in runtime.ACTIVE or runtime._alive(_home(), value):
+            _reconcile_conversation_operation(value)
             return _view_op(value)
         # Only a matching newly owned publication can be recovered automatically.
         final = value.get("final")
@@ -338,6 +339,7 @@ def operation_get(operation_id):
                         error="The operation worker exited. Owned staging and isolated outputs were preserved.",
                     )
                     atomic_json(_op_path(operation_id), value)
+    _reconcile_conversation_operation(value)
     return _view_op(value)
 
 
@@ -674,11 +676,15 @@ def conversation_open(project=None):
             atomic_json(_conversation_path(identity), value)
             index[key] = identity
             atomic_json(_home() / "conversations.json", index)
-        return _conversation_view(_read_conversation(index[key]))
+        return conversation_get(index[key])
 
 
 def conversation_get(conversation_id):
-    return _conversation_view(_read_conversation(_id(conversation_id)))
+    value = _read_conversation(_id(conversation_id))
+    for message in value["messages"]:
+        if message.get("status") in runtime.ACTIVE and message.get("operation_id"):
+            operation_get(message["operation_id"])
+    return _conversation_view(_read_conversation(conversation_id))
 
 
 def _save_conversation(path, value):
@@ -692,6 +698,7 @@ def _save_conversation(path, value):
 def conversation_send(conversation_id, message, provider):
     message = _text(message, "Message", 8192)
     providers.command_for(provider)
+    conversation_get(conversation_id)
     path = _conversation_path(conversation_id)
     with file_lock(path.with_suffix(".lock")):
         value = _read_conversation(conversation_id, locked=True)
@@ -728,11 +735,37 @@ def _update_message(conversation_id, operation_id, **changes):
         _save_conversation(path, value)
 
 
+def _reconcile_conversation_operation(operation):
+    if operation["kind"] != "conversation" or operation["status"] not in _TERMINAL:
+        return
+    identity = operation["payload"]["conversation_id"]
+    path = _conversation_path(identity)
+    with file_lock(path.with_suffix(".lock"), blocking=False):
+        value = _read_conversation(identity, locked=True)
+        changed = False
+        for message in value["messages"]:
+            if (
+                message.get("operation_id") == operation["operation_id"]
+                and message.get("status") in runtime.ACTIVE
+            ):
+                # Coordinator recovery does not cancel/discard an admitted provider run.
+                # Its immutable run/output association and existing text stay available.
+                message.update(status=operation["status"], error=operation.get("error"))
+                changed = True
+        if changed:
+            _save_conversation(path, value)
+
+
 def conversation_output(conversation_id, run_id, cursor=0):
     value = _read_conversation(conversation_id)
     if not any(message.get("run_id") == run_id for message in value["messages"]):
         raise ConflictError("That run belongs to a different conversation.")
-    return runtime.output(value["root"], run_id, cursor)
+    try:
+        return runtime.output(value["root"], run_id, cursor, blocking=False)
+    except ConflictError as error:
+        raise ConflictError(
+            "Project is busy. Retry output shortly; the output cursor is unchanged."
+        ) from error
 
 
 def _conversation_work(identity, op):
@@ -805,11 +838,16 @@ def execute_tasks(project, provider):
 
 def run_action(project, run_id, action, summary=""):
     project = _project(project)
-    runtime.get(project["root"], _id(run_id))
     if action not in {"apply", "discard", "cancel"}:
         raise IntegrityError("Select Apply Changes, Discard or Cancel.")
     if action == "discard":
         _text(summary, "Discard summary", 2048)
+    try:
+        runtime.get(project["root"], _id(run_id), blocking=False)
+    except ConflictError as error:
+        raise ConflictError(
+            "Project is busy. Retry this action shortly; it was not queued."
+        ) from error
     return _start(
         "action", {"run_id": run_id, "action": action, "summary": summary}, project=project
     )

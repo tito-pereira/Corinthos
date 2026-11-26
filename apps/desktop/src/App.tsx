@@ -189,8 +189,16 @@ export function App() {
           const stream = streams.current[key] || {cursor: 0, text: "", complete: false};
           if (!stream.complete) {
             const chunk = await bridge.output(conversation.conversation_id, message.run_id, stream.cursor);
-            streams.current[key] = {cursor: chunk.cursor, text: (stream.text + chunk.text).slice(0, 1024 * 1024), complete: chunk.complete};
-            mergeConversation({...conversation, messages: conversation.messages});
+            const updated = {cursor: chunk.cursor, text: (stream.text + chunk.text).slice(0, 1024 * 1024), complete: chunk.complete};
+            streams.current[key] = updated;
+            setConversations(previous => {
+              const latest = previous[conversation.conversation_id];
+              if (!latest || !updated.text) return previous;
+              return {...previous, [conversation.conversation_id]: {...latest, messages: latest.messages.map(current =>
+                current.role === "assistant" && current.run_id === message.run_id
+                  ? {...current, text: updated.text, truncated: !updated.complete && current.truncated}
+                  : current)}};
+            });
           }
         }
       }
